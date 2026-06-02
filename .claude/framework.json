@@ -1,0 +1,11 @@
+{
+  "project_name": "my-project",
+  "jira_project_key": null,
+  "jira_integration": false,
+  "slack_mcp_channel": null,
+  "slack_integration": false,
+  "build_command": "echo '[ship] Configure build_command in .claude/framework.json'",
+  "sdd_path": "docs/sdd",
+  "memory_path": null,
+  "languages": ["python"]
+}

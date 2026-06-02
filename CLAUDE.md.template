@@ -1,0 +1,76 @@
+# <PROJECT_NAME> — Claude Project Guide
+
+## Overview
+
+<One paragraph describing what this project does and its primary tech stack.>
+
+## Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Language | <e.g. Python 3.12> |
+| Framework | <e.g. FastAPI> |
+| Tests | <e.g. pytest> |
+| Container | <e.g. Docker> |
+
+## Dev Workflow
+
+```bash
+# Activate venv
+source .venv/bin/activate   # macOS/Linux
+.\.venv\Scripts\activate    # Windows
+
+# Install deps
+pip install -r requirements-dev.txt
+
+# Run tests
+python -m pytest . -v
+
+# Type check
+python -m mypy .
+
+# Lint + fix
+python -m ruff check --fix .
+
+# Deploy
+<your build/deploy command>
+```
+
+## Coding Standards
+
+- Type hints required on all function signatures
+- `X | None` not `Optional[X]`
+- No docblocks — name things clearly instead
+- Tests live alongside code, not in a separate `tests/` tree
+- <Add your project-specific rules here>
+
+## Key File Paths
+
+| Purpose | Path |
+|---------|------|
+| Main entry point | `<path>` |
+| Config | `<path>` |
+| Tests | `<path>` |
+
+## Development Pipeline (Slash Commands)
+
+```
+/design <requirement or TICKET-ID>   → generate SDD
+/breakdown <sdd-path>                → decompose into tasks
+(sdd-implementer skill)              → implement from SDD
+/review                              → code review
+/ship <env>                          → test → build → deploy
+/retro                               → capture learnings
+/standup                             → daily status report
+/resume                              → continue interrupted session
+```
+
+## Lessons Learned
+
+<!-- /retro appends entries here automatically -->
+
+## Do Not Do
+
+- <Add project-specific anti-patterns here>
+- Do not use `Optional[X]` — write `X | None`
+- Do not add `# noqa` without writing a feedback memory explaining the suppression

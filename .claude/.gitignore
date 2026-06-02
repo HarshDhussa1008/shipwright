@@ -1,0 +1,6 @@
+# Runtime state — not for version control in user projects
+session_id
+checkpoint.json
+task_state.json
+anti_pattern_registry.json
+settings.local.json
