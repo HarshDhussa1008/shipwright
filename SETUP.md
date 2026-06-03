@@ -23,14 +23,14 @@ git clone https://github.com/HarshDhussa1008/shipwright
 
 **macOS / Linux:**
 ```bash
-cd claude-dev-framework
+cd shipwright
 chmod +x install.sh
 ./install.sh --project-dir /path/to/your/project
 ```
 
 **Windows:**
 ```powershell
-cd claude-dev-framework
+cd shipwright
 .\install.ps1 -ProjectDir C:\path\to\your\project
 ```
 
@@ -64,8 +64,6 @@ Edit `.claude/framework.json` in your project root:
 | `sdd_path` | `"docs/sdd"` | Directory where SDDs are saved (relative to project root) |
 | `memory_path` | `null` | Override memory directory (auto-derived if null) |
 | `languages` | `["python"]` | Languages for quality gate (only `python` currently) |
-| `test_command` | `null` | Override test command (`python -m pytest . -v` if null) |
-| `default_branch` | `null` | Override default branch (`master`/`main` if null) |
 
 ### 4. Fill in CLAUDE.md
 

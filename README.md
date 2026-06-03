@@ -7,8 +7,8 @@ A structured engineering pipeline for [Claude Code](https://claude.ai/code). Des
 A set of Claude Code **skills** (slash commands), **hooks** (automatic quality enforcement), and **state files** that turn Claude Code into a full engineering pipeline:
 
 ```
-/design  →  /breakdown  →  implement  →  /review  →  /ship
-              (Jira sync)                              (Jira close)
+/design  →  /breakdown  →  implement  →  /ship
+              (Jira sync)                 (review + build + Jira close)
 ```
 
 ### Skills
@@ -46,7 +46,7 @@ A set of Claude Code **skills** (slash commands), **hooks** (automatic quality e
 git clone https://github.com/HarshDhussa1008/shipwright
 cd shipwright
 chmod +x install.sh
-./install.sh
+./install.sh --project-dir /path/to/your/project
 ```
 
 ### Windows (PowerShell)
@@ -54,13 +54,13 @@ chmod +x install.sh
 ```powershell
 git clone https://github.com/HarshDhussa1008/shipwright
 cd shipwright
-.\install.ps1
+.\install.ps1 -ProjectDir C:\path\to\your\project
 ```
 
 The installer:
 1. Copies skills to `~/.claude/skills/` (user-level, available in all projects)
 2. Copies the `.claude/` directory into your project (hooks + state files)
-3. Patches `.claude/settings.json` with hook wiring
+3. Copies `.claude/settings.json` with hook wiring (if one already exists, prints instructions to merge manually)
 
 ## Configuration
 
