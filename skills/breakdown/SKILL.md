@@ -9,7 +9,20 @@ You are a Technical Lead decomposing a System Design Document into an atomic, de
 ### Step 0 — Compact check
 If the conversation is > 20 turns old, run `/compact` before proceeding.
 
-### Step 1 — Read SDD + check Jira config
+### Step 1 — Gate: is this SDD ready to decompose?
+
+Read the SDD and **refuse to proceed** if any of these is true. Say which one, and stop — do not decompose a design that has not been hardened.
+
+- No `## Risk Register` section, or it is empty
+- Any failure class from `/design` Step 4 has no verdict
+- Any risk with severity `Critical` whose Status is not `mitigated`
+- No `## Test Plan`, or a Goal with no corresponding test row
+
+If it fails: `"This SDD has not been hardened — <reason>. Run /design on it before breaking it down."`
+
+A `High` risk left unmitigated is a warning, not a block: list them and ask whether to proceed.
+
+### Step 2 — Read SDD + check Jira config
 Run in parallel:
 - Read the SDD file at the provided path (extract work units only — don't hold full content in context)
 - Read `.claude/framework.json` to check `jira_integration` and `jira_project_key`
@@ -22,7 +35,7 @@ If `jira_integration: true`:
 
 If `jira_integration: false`: skip Jira steps — note "(Jira disabled)" in output.
 
-### Step 2 — Decompose
+### Step 3 — Decompose
 Identify logical work units from the SDD. Rules:
 - **Maximum 8 tasks per feature.** More than 8 means the SDD needs to be split — say so and stop.
 - **Size each task:** S (< 2h), M (2–4h), L (> 4h — must be split before proceeding).
@@ -30,7 +43,7 @@ Identify logical work units from the SDD. Rules:
 - **No vague tasks:** Never create a task titled "misc", "cleanup", "refactor", "tests", or "other". Every task title must describe a specific, verifiable outcome.
 - Each task needs: title (imperative), description (what + acceptance criteria), complexity (S/M/L).
 
-### Step 3 — Order by dependency
+### Step 4 — Order by dependency
 Determine topological ordering. Output the dependency tree before creating tasks:
 ```
 [1] Add DB schema migration (S) — no deps
@@ -40,7 +53,7 @@ Determine topological ordering. Output the dependency tree before creating tasks
 ```
 Confirm ordering with user if any dependency is non-obvious.
 
-### Step 4 — Write checkpoint (Phase 1 complete)
+### Step 5 — Write checkpoint (Phase 1 complete)
 Write to `.claude/checkpoint.json`:
 ```json
 {
@@ -54,7 +67,7 @@ Write to `.claude/checkpoint.json`:
 }
 ```
 
-### Step 5 — Create tasks (in parallel per task)
+### Step 6 — Create tasks (in parallel per task)
 For each task in dependency order:
 
 **a) Create in Claude Code:**
@@ -76,12 +89,15 @@ If parent is an Epic: use `"issuetype": { "name": "Story" }` and link via `custo
 
 **If Jira creation fails:** log the error, continue with local task creation, add `"jira_key": null, "jira_sync_error": "<error>"` in task_state.json. Never block on Jira failure.
 
-### Step 6 — Write task_state.json
+### Step 7 — Write task_state.json
 Write `.claude/task_state.json`:
 ```json
 {
   "feature_branch": "<branch>",
   "parent_jira_key": "<parent Jira key or null>",
+  "sdd_path": "<path to the SDD this came from>",
+  "approved": false,
+  "retro_offered": false,
   "last_memory_write": null,
   "last_test_run": null,
   "tasks": [
@@ -90,6 +106,7 @@ Write `.claude/task_state.json`:
       "title": "<task title>",
       "complexity": "S|M|L",
       "status": "pending",
+      "needs_recheck": false,
       "jira_key": "<Jira subtask key or null>",
       "acceptance_criteria": ["<from task description>"]
     }
@@ -97,7 +114,13 @@ Write `.claude/task_state.json`:
 }
 ```
 
-### Step 7 — Post Jira comment on parent (if Jira enabled)
+`approved` is always written `false` here. It flips to `true` when the user confirms the plan — their plain "approved" or "yes" is the signal; there is no separate command. `sdd-implementer` refuses to write code until it flips.
+
+`needs_recheck` starts `false`. `sdd-implementer` sets it when an amendment invalidates a pending task's plan.
+
+`retro_offered` starts `false`. `stop_checklist.py` flips it once all tasks are `completed` and offers `/retro` — it never runs `/retro` itself.
+
+### Step 8 — Post Jira comment on parent (if Jira enabled)
 Post a comment on the parent Jira ticket summarising the breakdown:
 ```
 🔀 *Breakdown created by Claude Code*
@@ -111,13 +134,19 @@ Tasks:
 SDD: <sdd path>
 ```
 
-### Step 8 — Checkpoint Phase 3 complete
+### Step 9 — Checkpoint Phase 3 complete
 ```json
 {
   "phase": 3,
-  "phase_label": "task_state.json written, tasks created",
-  "next_step": "Start first task with sdd-implementer skill"
+  "phase_label": "task_state.json written, tasks created, awaiting approval",
+  "next_step": "User reviews the task list, then says approved to start implementation"
 }
+```
+
+### Step 10 — Handoff
+End with the dependency tree and the literal next step — the approval, not a command:
+```
+Review the plan above, then say "approved" to start implementation.
 ```
 
 ## Token Budget Rules

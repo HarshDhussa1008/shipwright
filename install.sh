@@ -50,6 +50,19 @@ for hook in "$FRAMEWORK_DIR/.claude/hooks/"*.py; do
   fi
 done
 
+# Copy tools (dashboard)
+mkdir -p "$PROJECT_DIR/.claude/tools"
+for tool in "$FRAMEWORK_DIR/.claude/tools/"*.py; do
+  tool_name=$(basename "$tool")
+  dest="$PROJECT_DIR/.claude/tools/$tool_name"
+  if [[ -f "$dest" ]]; then
+    echo "  [SKIP] tools/$tool_name already exists"
+  else
+    cp "$tool" "$dest"
+    echo "  [OK]   tools/$tool_name"
+  fi
+done
+
 # Copy framework.json if not present
 if [[ ! -f "$PROJECT_DIR/.claude/framework.json" ]]; then
   cp "$FRAMEWORK_DIR/.claude/framework.json" "$PROJECT_DIR/.claude/framework.json"
@@ -59,7 +72,7 @@ else
 fi
 
 # Copy empty state files and .gitignore if not present
-for state_file in checkpoint.json task_state.json anti_pattern_registry.json .gitignore; do
+for state_file in checkpoint.json task_state.json anti_pattern_registry.json amendments_pending.json .gitignore; do
   if [[ ! -f "$PROJECT_DIR/.claude/$state_file" ]]; then
     cp "$FRAMEWORK_DIR/.claude/$state_file" "$PROJECT_DIR/.claude/$state_file"
     echo "  [OK]   $state_file"
@@ -72,7 +85,9 @@ if [[ ! -f "$PROJECT_DIR/.claude/settings.json" ]]; then
   echo "  [OK]   settings.json"
 else
   echo "  [SKIP] settings.json already exists — merge hooks manually if needed"
-  echo "         See $FRAMEWORK_DIR/.claude/settings.json for the hook config"
+  echo "         See $FRAMEWORK_DIR/.claude/settings.json for the hooks AND statusLine config"
+  echo "         The statusLine block is required for budget alerts — it is the only"
+  echo "         surface that exposes rate_limits (hooks do not receive them)."
 fi
 
 # 3. Copy CLAUDE.md template if project doesn't have one
@@ -89,7 +104,7 @@ echo "1. Edit $PROJECT_DIR/.claude/framework.json with your project settings"
 echo "   - Set project_name, jira_project_key (or jira_integration: false)"
 echo "   - Set build_command to your deploy command"
 echo "2. Fill in $PROJECT_DIR/CLAUDE.md placeholders"
-echo "3. Open Claude Code in $PROJECT_DIR — skills will be available as /design, /breakdown, /ship, /standup, /retro"
+echo "3. Open Claude Code in $PROJECT_DIR — skills: /design, /breakdown, /ship, /retro, /dashboard"
 echo ""
 echo "Optional: install Jira MCP for full Jira integration"
 echo "  https://github.com/anthropics/anthropic-tools/tree/main/mcp-atlassian"

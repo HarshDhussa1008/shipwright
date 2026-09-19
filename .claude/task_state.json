@@ -1,6 +1,9 @@
 {
   "feature_branch": "",
   "parent_jira_key": null,
+  "sdd_path": null,
+  "approved": false,
+  "retro_offered": false,
   "last_memory_write": null,
   "last_test_run": null,
   "tasks": []

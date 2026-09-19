@@ -5,6 +5,11 @@
   "slack_mcp_channel": null,
   "slack_integration": false,
   "build_command": "echo '[ship] Configure build_command in .claude/framework.json'",
+  "test_command": "python -m pytest . -v --tb=short",
+  "lint_command": "python -m ruff check --fix {file}",
+  "typecheck_command": "python -m mypy {file} --ignore-missing-imports --no-error-summary",
+  "gate_extensions": [".py"],
+  "budget_alert_threshold": 95,
   "sdd_path": "docs/sdd",
   "memory_path": null,
   "languages": ["python"]

@@ -7,8 +7,16 @@ Always exits 0 (advisory, never blocking).
 
 import json
 import os
+import shlex
 import subprocess
+import sys
 from pathlib import Path
+
+if _reconfigure := getattr(sys.stdout, "reconfigure", None):
+    try:
+        _reconfigure(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        pass
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REGISTRY_PATH = REPO_ROOT / ".claude" / "anti_pattern_registry.json"
@@ -51,8 +59,8 @@ def get_edited_file() -> Path | None:
     return None
 
 
-def should_skip(path: Path, skip_dirs: set[str]) -> bool:
-    if path.suffix != ".py":
+def should_skip(path: Path, skip_dirs: set[str], extensions: list[str]) -> bool:
+    if extensions and path.suffix not in extensions:
         return True
     for part in path.parts:
         if part in skip_dirs:
@@ -60,8 +68,19 @@ def should_skip(path: Path, skip_dirs: set[str]) -> bool:
     return False
 
 
-def run(cmd: list[str]) -> tuple[int, str]:
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
+def run_template(template: str, edited: Path) -> tuple[int, str]:
+    """Commands come from framework.json so the gate is not hardcoded to one toolchain.
+
+    {file} is substituted per-token after tokenizing: shlex treats the backslashes in a
+    Windows path as escapes, so substituting into the string first mangles the path.
+    """
+    cmd = [tok.replace("{file}", str(edited)) for tok in shlex.split(template)]
+    if not cmd:
+        return 0, ""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT, timeout=25, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return 0, ""
     return result.returncode, (result.stdout + result.stderr).strip()
 
 
@@ -92,22 +111,29 @@ def save_registry(registry: dict) -> None:
 def main() -> None:
     config = load_framework_config()
     skip_dirs = get_venv_skip_dirs(config)
-    languages = config.get("languages", ["python"])
+    extensions = config.get("gate_extensions", [".py"])
 
     edited = get_edited_file()
-    if edited is None or should_skip(edited, skip_dirs):
+    if edited is None or should_skip(edited, skip_dirs, extensions):
         return
 
-    if "python" not in languages:
+    lint_template = config.get("lint_command")
+    typecheck_template = config.get("typecheck_command")
+    if not lint_template and not typecheck_template:
         return
 
-    ruff_rc, ruff_out = run(["python", "-m", "ruff", "check", "--fix", str(edited)])
-    ruff_codes = extract_ruff_codes(ruff_out)
-    ruff_summary = f"{len(ruff_codes)} issues" if ruff_codes else "0 issues"
+    ruff_codes: list[str] = []
+    lint_summary = "skipped"
+    if lint_template:
+        _, lint_out = run_template(lint_template, edited)
+        ruff_codes = extract_ruff_codes(lint_out)
+        lint_summary = f"{len(ruff_codes)} issues" if ruff_codes else "0 issues"
 
-    mypy_rc, mypy_out = run(["python", "-m", "mypy", str(edited), "--ignore-missing-imports", "--no-error-summary"])
-    mypy_lines = [l for l in mypy_out.splitlines() if ": error:" in l or ": warning:" in l]
-    mypy_summary = f"{len(mypy_lines)} warn" if mypy_lines else "0 warn"
+    type_summary = "skipped"
+    if typecheck_template:
+        _, type_out = run_template(typecheck_template, edited)
+        type_lines = [l for l in type_out.splitlines() if ": error:" in l or ": warning:" in l]
+        type_summary = f"{len(type_lines)} warn" if type_lines else "0 warn"
 
     registry = load_registry()
     alerts = []
@@ -121,7 +147,7 @@ def main() -> None:
     save_registry(registry)
 
     registry_summary = ", ".join(f"{k}×{v['count']}" for k, v in registry.items() if v["count"] > 0) or "clean"
-    print(f"[GATE] ruff: {ruff_summary} | mypy: {mypy_summary} | registry: {registry_summary}")
+    print(f"[GATE] lint: {lint_summary} | types: {type_summary} | registry: {registry_summary}")
 
     for alert in alerts:
         code = alert.split("×")[0]

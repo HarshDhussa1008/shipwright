@@ -3,4 +3,9 @@ session_id
 checkpoint.json
 task_state.json
 anti_pattern_registry.json
+amendments_pending.json
+budget.json
+budget.json.tmp
+dashboard.html
+inbox/
 settings.local.json

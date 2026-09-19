@@ -61,7 +61,7 @@ python -m ruff check --fix .
 /review                              → code review
 /ship <env>                          → test → build → deploy
 /retro                               → capture learnings
-/standup                             → daily status report
+/dashboard                           → visual pipeline state (read-only)
 /resume                              → continue interrupted session
 ```
 

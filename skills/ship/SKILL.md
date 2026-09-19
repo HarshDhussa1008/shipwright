@@ -19,7 +19,21 @@ If the conversation is > 20 turns old, run `/compact` first.
 Read `.claude/framework.json` to get `build_command`, `jira_integration`, `slack_integration`, `project_name`.
 Confirm: "Shipping **<project_name>** to **<env>**. Proceed? (yes/no)"
 
-### Step 1 — Gate 1: Tests
+### Step 1 — Gate 0: Documentation
+
+Cheap, runs first, catches the drift that accumulates during the bug loop.
+
+- The SDD referenced by `task_state.json.sdd_path` exists.
+- Its `## Amendments` section is at or under the 5-entry compaction threshold. Over it → fold them in before shipping.
+- `.claude/amendments_pending.json` has no unflushed `candidates`. Unflushed means the SDD is knowingly stale.
+- No task is left `needs_recheck: true` — an amendment invalidated its plan and nobody looked.
+- No `Critical` risk in the Risk Register is unmitigated.
+
+- **PASS →** Gate 1
+- **FAIL (prod) →** hard stop. The design record is part of the deliverable.
+- **FAIL (staging) →** warn with the list, proceed.
+
+### Step 2 — Gate 1: Tests
 Run the project's test suite. Check `.claude/framework.json` for a `test_command`; default to:
 ```bash
 python -m pytest . -v --tb=short
@@ -32,7 +46,7 @@ Write checkpoint (Phase 1):
 { "active_skill": "ship", "phase": 1, "phase_label": "Tests passed", "next_step": "Gate 2: type check" }
 ```
 
-### Step 2 — Gate 2: Type check
+### Step 3 — Gate 2: Type check
 ```bash
 python -m mypy . --ignore-missing-imports
 ```
@@ -42,7 +56,7 @@ python -m mypy . --ignore-missing-imports
 
 Write checkpoint (Phase 2).
 
-### Step 3 — Gate 3: Code review
+### Step 4 — Gate 3: Code review
 Run `/review` (code-review skill) on `git diff <default-branch>...HEAD`.
 - **No critical findings →** proceed
 - **Critical findings (prod) →** hard stop. List findings. Fix required.
@@ -50,7 +64,7 @@ Run `/review` (code-review skill) on `git diff <default-branch>...HEAD`.
 
 Write checkpoint (Phase 3).
 
-### Step 4 — Gate 4: Build
+### Step 5 — Gate 4: Build
 Run the `build_command` from `.claude/framework.json`:
 ```bash
 <build_command>
@@ -61,7 +75,7 @@ Capture last 50 lines of stdout only (not full build log).
 
 Write checkpoint (Phase 4).
 
-### Step 5 — Post-deploy sync
+### Step 6 — Post-deploy sync
 
 **a) Jira sync (only if `jira_integration: true`):**
 Read `.claude/task_state.json` for `parent_jira_key` and all task `jira_key` values.
@@ -93,7 +107,7 @@ Post via MCP Slack to `slack_mcp_channel`:
 - Clear `checkpoint.json` (write `{}`)
 - Mark all tasks in `task_state.json` as `completed` if env is `prod`
 
-### Step 6 — Failure memory + Jira comment
+### Step 7 — Failure memory + Jira comment
 Every failed gate writes a project memory. No silent failures.
 
 If `jira_integration: true`, also post a comment on the parent Jira ticket:

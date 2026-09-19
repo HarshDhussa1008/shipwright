@@ -47,6 +47,19 @@ Get-ChildItem (Join-Path $FrameworkDir ".claude\hooks") -Filter "*.py" | ForEach
     }
 }
 
+# Copy tools (dashboard)
+$toolsDir = Join-Path $claudeDir "tools"
+if (-not (Test-Path $toolsDir)) { New-Item -ItemType Directory -Force $toolsDir | Out-Null }
+Get-ChildItem (Join-Path $FrameworkDir ".claude\tools") -Filter "*.py" | ForEach-Object {
+    $dest = Join-Path $toolsDir $_.Name
+    if (Test-Path $dest) {
+        Write-Host "  [SKIP] tools\$($_.Name) already exists" -ForegroundColor Yellow
+    } else {
+        Copy-Item $_.FullName $dest
+        Write-Host "  [OK]   tools\$($_.Name)" -ForegroundColor Green
+    }
+}
+
 # Copy framework.json
 $frameworkJsonDest = Join-Path $claudeDir "framework.json"
 if (-not (Test-Path $frameworkJsonDest)) {
@@ -57,7 +70,7 @@ if (-not (Test-Path $frameworkJsonDest)) {
 }
 
 # Copy empty state files and .gitignore
-"checkpoint.json", "task_state.json", "anti_pattern_registry.json", ".gitignore" | ForEach-Object {
+"checkpoint.json", "task_state.json", "anti_pattern_registry.json", "amendments_pending.json", ".gitignore" | ForEach-Object {
     $dest = Join-Path $claudeDir $_
     if (-not (Test-Path $dest)) {
         Copy-Item (Join-Path $FrameworkDir ".claude\$_") $dest
@@ -72,7 +85,9 @@ if (-not (Test-Path $settingsDest)) {
     Write-Host "  [OK]   settings.json" -ForegroundColor Green
 } else {
     Write-Host "  [SKIP] settings.json already exists — merge hooks manually if needed" -ForegroundColor Yellow
-    Write-Host "         See $FrameworkDir\.claude\settings.json for the hook config" -ForegroundColor Yellow
+    Write-Host "         See $FrameworkDir\.claude\settings.json for the hooks AND statusLine config" -ForegroundColor Yellow
+    Write-Host "         The statusLine block is required for budget alerts — it is the only" -ForegroundColor Yellow
+    Write-Host "         surface that exposes rate_limits (hooks do not receive them)." -ForegroundColor Yellow
 }
 
 # Copy CLAUDE.md template
@@ -90,7 +105,7 @@ Write-Host "1. Edit $claudeDir\framework.json with your project settings"
 Write-Host "   - Set project_name, jira_project_key (or jira_integration: false)"
 Write-Host "   - Set build_command to your deploy command"
 Write-Host "2. Fill in $claudeMdDest placeholders"
-Write-Host "3. Open Claude Code in $ProjectDir — skills will be available as /design, /breakdown, /ship, /standup, /retro"
+Write-Host "3. Open Claude Code in $ProjectDir — skills: /design, /breakdown, /ship, /retro, /dashboard"
 Write-Host ""
 Write-Host "Optional: install Jira MCP for full Jira integration"
 Write-Host "  https://github.com/anthropics/anthropic-tools/tree/main/mcp-atlassian"

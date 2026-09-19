@@ -8,6 +8,11 @@
       "Bash(git commit -m*)"
     ]
   },
+  "statusLine": {
+    "type": "command",
+    "command": "python .claude/hooks/budget_sentinel.py",
+    "refreshInterval": 30000
+  },
   "hooks": {
     "UserPromptSubmit": [
       {
