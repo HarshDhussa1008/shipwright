@@ -24,7 +24,9 @@ TASK_STATE_PATH = STATE_DIR / "task_state.json"
 REGISTRY_PATH = STATE_DIR / "anti_pattern_registry.json"
 AMENDMENTS_PATH = STATE_DIR / "amendments_pending.json"
 BUDGET_PATH = STATE_DIR / "budget.json"
+CHECKPOINT_PATH = STATE_DIR / "checkpoint.json"
 MEMORY_NUDGE_HOURS = 4
+CHECKPOINT_STALE_MINUTES = 10
 
 
 def get_unstaged_files() -> list[str]:
@@ -147,6 +149,32 @@ def untracked_commits() -> str | None:
     return None
 
 
+def checkpoint_stale() -> str | None:
+    """sdd-implementer's 'write checkpoint at every task boundary' lives only in its
+    SKILL.md -- nothing enforces it, so under context/budget pressure it's the first
+    housekeeping step to get dropped while task_state.json (the real progress record)
+    keeps moving. Catch the drift by comparing mtimes instead of trusting compliance."""
+    state = read_json(TASK_STATE_PATH)
+    tasks = state.get("tasks") or []
+    if not state.get("approved") or not any(
+        t.get("status") in ("in_progress", "completed") for t in tasks
+    ):
+        return None
+
+    if not CHECKPOINT_PATH.exists():
+        return "[ ] Implementation is underway but checkpoint.json was never written — write it now"
+
+    try:
+        task_mtime = TASK_STATE_PATH.stat().st_mtime
+        checkpoint_mtime = CHECKPOINT_PATH.stat().st_mtime
+    except OSError:
+        return None
+
+    if task_mtime - checkpoint_mtime > CHECKPOINT_STALE_MINUTES * 60:
+        return "[ ] checkpoint.json is stale relative to task_state.json — update phase/next_step to reflect current progress"
+    return None
+
+
 def retro_offer() -> str | None:
     """All tasks done -> offer /retro once. Never auto-run it: the 4 questions need a
     real answer from the user, not the agent grading its own design after the fact."""
@@ -186,6 +214,9 @@ def main() -> None:
     # Budget breach outranks everything else — it is the only item with a deadline.
     if directive := budget_directive():
         print("\n" + directive)
+
+    if stale := checkpoint_stale():
+        items.append(stale)
 
     items.extend(staged_amendments())
 
