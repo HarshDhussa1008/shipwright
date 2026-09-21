@@ -1,8 +1,11 @@
 """
-UserPromptSubmit hook — fires once per session on the first user message.
-1. Injects top-3 relevant memories from the project's MEMORY.md
-2. Shows [CHECKPOINT] banner if checkpoint.json is non-empty and < 48h old
-Always exits 0. Uses a session_id temp file to fire only once per session.
+UserPromptSubmit hook — fires on every user message.
+1. Budget breach second-chance: relays stop_checklist.py's checkpoint directive if the
+   Stop hook never got a clean turn boundary to fire it in (runs every prompt).
+2. Once per session, on the first message: injects top-3 relevant memories from the
+   project's MEMORY.md, and shows a [CHECKPOINT] banner if checkpoint.json is non-empty
+   and < 48h old. Uses a session_id temp file to fire only once per session.
+Always exits 0.
 """
 
 import json
@@ -22,6 +25,7 @@ if _reconfigure := getattr(sys.stdout, "reconfigure", None):
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECKPOINT_PATH = REPO_ROOT / ".claude" / "checkpoint.json"
 SESSION_ID_PATH = REPO_ROOT / ".claude" / "session_id"
+BUDGET_PATH = REPO_ROOT / ".claude" / "budget.json"
 CHECKPOINT_MAX_AGE_HOURS = 48
 MAX_MEMORIES = 3
 
@@ -168,6 +172,36 @@ def load_checkpoint() -> dict | None:
         return None
 
 
+def budget_directive() -> str | None:
+    """Second chance for the Stop-hook relay in stop_checklist.py: if a rate-limit window
+    gets crossed mid-response with no clean turn boundary before the hard limit hits, Stop
+    may never fire in that session. UserPromptSubmit fires on every message (not just the
+    first), so it catches an unacknowledged breach the next time the user sends anything --
+    including after Claude Code's own auto-continue resumes the session post-reset."""
+    try:
+        budget = json.loads(BUDGET_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+    alert = budget.get("alert") or {}
+    if not alert.get("tripped") or alert.get("acknowledged"):
+        return None
+
+    budget["alert"]["acknowledged"] = True
+    try:
+        BUDGET_PATH.write_text(json.dumps(budget, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+    resets = alert.get("resets_at_iso") or "unknown"
+    return (
+        f"\n**BUDGET {alert.get('used_percentage', 0):.0f}% of {alert.get('window')} limit "
+        f"(threshold {alert.get('threshold')}%)** — window resets {resets}.\n"
+        "[ ] Write checkpoint.json NOW with the literal next action (file and line), "
+        "finish only the edit in hand, and stop starting new work."
+    )
+
+
 def budget_banner() -> str | None:
     """Surface whether a breached rate-limit window has since reset, so a resume is safe."""
     try:
@@ -192,6 +226,10 @@ def budget_banner() -> str | None:
 
 
 def main() -> None:
+    # Runs on every prompt, not gated by already_fired -- see budget_directive() docstring.
+    if directive := budget_directive():
+        print(directive)
+
     if already_fired():
         return
 
