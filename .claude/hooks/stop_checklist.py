@@ -30,7 +30,9 @@ MEMORY_NUDGE_HOURS = 4
 def get_unstaged_files() -> list[str]:
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain"],
+            # "-- ." scopes to REPO_ROOT and below -- without it, git reports the
+            # whole repo, which floods a monorepo subproject with unrelated changes
+            ["git", "status", "--porcelain", "--", "."],
             capture_output=True, text=True, cwd=REPO_ROOT, check=False,
         )
         lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
@@ -118,7 +120,8 @@ def untracked_commits() -> str | None:
         return None
     try:
         result = subprocess.run(
-            ["git", "log", "-15", "--format=%h %s"],
+            # "-- ." scopes to commits touching REPO_ROOT and below, same reason as above
+            ["git", "log", "-15", "--format=%h %s", "--", "."],
             capture_output=True, text=True, cwd=REPO_ROOT, timeout=5, check=False,
         )
     except (OSError, subprocess.SubprocessError):

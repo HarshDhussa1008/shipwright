@@ -21,11 +21,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_DIR = REPO_ROOT / ".claude"
 BUDGET_PATH = STATE_DIR / "budget.json"
+HISTORY_PATH = STATE_DIR / "budget_history.jsonl"
 CHECKPOINT_PATH = STATE_DIR / "checkpoint.json"
 CONFIG_PATH = STATE_DIR / "framework.json"
 
 DEFAULT_THRESHOLD = 95.0
 BAR_WIDTH = 8
+HISTORY_MAX_SAMPLES = 60
+HISTORY_MIN_INTERVAL_SECONDS = 60
 
 # Windows consoles default to cp1252, which cannot encode the block/box glyphs.
 # Without this the statusline raises on every render.
@@ -68,6 +71,35 @@ def git_branch() -> str:
 def bar(pct: float) -> str:
     filled = min(BAR_WIDTH, max(0, round(pct / 100 * BAR_WIDTH)))
     return GLYPHS["full"] * filled + GLYPHS["empty"] * (BAR_WIDTH - filled)
+
+
+def append_history(now: datetime, context_pct: float | None, windows: dict) -> None:
+    """Bounded trend log for the dashboard sparkline. Rewritten (not truly appended)
+    each time to enforce the cap cheaply -- this runs on a statusline render cadence,
+    not a hot path, so an O(n) rewrite of <= HISTORY_MAX_SAMPLES lines is fine."""
+    samples: list[dict] = []
+    try:
+        samples = [json.loads(line) for line in HISTORY_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except (OSError, json.JSONDecodeError, ValueError):
+        samples = []
+
+    if samples and now.timestamp() - samples[-1].get("t", 0) < HISTORY_MIN_INTERVAL_SECONDS:
+        return  # statusline can render every few seconds; sample at most once a minute
+
+    samples.append({
+        "t": int(now.timestamp()),
+        "ctx": context_pct,
+        "5h": windows.get("five_hour", {}).get("used_percentage"),
+        "7d": windows.get("seven_day", {}).get("used_percentage"),
+    })
+    samples = samples[-HISTORY_MAX_SAMPLES:]
+
+    tmp = HISTORY_PATH.with_suffix(".jsonl.tmp")
+    try:
+        tmp.write_text("\n".join(json.dumps(s) for s in samples) + "\n", encoding="utf-8")
+        os.replace(tmp, HISTORY_PATH)
+    except OSError:
+        pass
 
 
 def window_state(rate_limits: dict, key: str) -> dict | None:
@@ -128,8 +160,11 @@ def main() -> None:
             "acknowledged": (previous.get("alert") or {}).get("acknowledged", False) if was_tripped else False,
         }
 
+    now = datetime.now(timezone.utc)
+    append_history(now, context_pct if isinstance(context_pct, (int, float)) else None, windows)
+
     write_atomic(BUDGET_PATH, {
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": now.isoformat(),
         "updated_at_epoch": int(time.time()),
         "context_window": {
             "used_percentage": context_pct,

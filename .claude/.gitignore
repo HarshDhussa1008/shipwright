@@ -6,6 +6,8 @@ anti_pattern_registry.json
 amendments_pending.json
 budget.json
 budget.json.tmp
+budget_history.jsonl
+budget_history.jsonl.tmp
 dashboard.html
 inbox/
 settings.local.json
