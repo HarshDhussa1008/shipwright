@@ -5,8 +5,8 @@ Renders the state files, the active SDD's risk register and amendments, budget h
 (with a trend sparkline), pattern trends, git status, and the drop-inbox into a single
 self-contained HTML page.
 
-    python .claude/tools/dashboard.py            # write dashboard.html once and print its path
-    python .claude/tools/dashboard.py --serve    # serve on localhost, genuinely live:
+    run.sh tools/dashboard.py [--project DIR]            # write .claude/dashboard.html, print its path
+    run.sh tools/dashboard.py [--project DIR] --serve    # serve on localhost, genuinely live:
                                                    each poll re-reads state from disk,
                                                    not a cached file re-sent on a timer.
 
@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import re
 import subprocess
 import sys
@@ -26,7 +27,25 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+
+def resolve_project_root(argv: list[str]) -> Path:
+    """The dashboard ships inside the plugin, so the project is not relative to this file:
+    --project, then $CLAUDE_PROJECT_DIR, then the nearest ancestor with .claude/framework.json."""
+    for i, arg in enumerate(argv):
+        if arg == "--project" and i + 1 < len(argv):
+            return Path(argv[i + 1]).expanduser().resolve()
+        if arg.startswith("--project="):
+            return Path(arg.split("=", 1)[1]).expanduser().resolve()
+    if env := os.environ.get("CLAUDE_PROJECT_DIR"):
+        return Path(env).resolve()
+    here = Path.cwd().resolve()
+    for candidate in (here, *here.parents):
+        if (candidate / ".claude" / "framework.json").is_file():
+            return candidate
+    return here
+
+
+REPO_ROOT = resolve_project_root(sys.argv[1:])
 STATE_DIR = REPO_ROOT / ".claude"
 INBOX_DIR = STATE_DIR / "inbox"
 HISTORY_PATH = STATE_DIR / "budget_history.jsonl"
@@ -75,10 +94,13 @@ def esc(value: object) -> str:
 
 
 def find_sdd(config: dict, branch: str) -> Path | None:
+    planned = read_json(STATE_DIR / "task_state.json").get("sdd_path")
+    if planned and (REPO_ROOT / planned).is_file():
+        return REPO_ROOT / planned
     sdd_dir = REPO_ROOT / config.get("sdd_path", "docs/sdd")
     if not sdd_dir.is_dir():
         return None
-    candidates = sorted(sdd_dir.glob("*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
+    candidates = sorted(sdd_dir.rglob("*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
     if not candidates:
         return None
     slug = re.sub(r"[^a-z0-9]+", "-", branch.lower()).strip("-")
@@ -192,7 +214,7 @@ def render_budget(budget: dict, threshold: float, history: list[dict]) -> str:
 def render_tasks(state: dict) -> str:
     tasks = state.get("tasks") or []
     if not tasks:
-        return "<p class=dim>No tasks. Run /breakdown.</p>"
+        return "<p class=dim>No tasks. Run /shipwright:breakdown.</p>"
     approved = state.get("approved") is True
     badge = "approved" if approved else "awaiting approval"
     counts: dict[str, int] = {}
@@ -227,7 +249,7 @@ def render_tasks(state: dict) -> str:
 
 def render_risks(risks: list[dict[str, str]]) -> str:
     if not risks:
-        return "<p class=dim>No risk register in the active SDD. /design Step 4 produces it.</p>"
+        return "<p class=dim>No risk register in the active SDD. /shipwright:design Step 4 produces it.</p>"
     rows = [
         f'<tr><td>{esc(r["risk"])}</td><td class=dim>{esc(r["cls"])}</td>'
         f'<td class="sev {esc(r["severity"].lower())}">{SEVERITY_ICON.get(r["severity"].lower(), "")} {esc(r["severity"])}</td>'
@@ -541,6 +563,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Render the shipwright pipeline dashboard.")
     parser.add_argument("--serve", action="store_true", help="serve on localhost, live-refreshing")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--project", help="project root (default: $CLAUDE_PROJECT_DIR or nearest .claude/framework.json)")
     args = parser.parse_args()
 
     project = project_name()

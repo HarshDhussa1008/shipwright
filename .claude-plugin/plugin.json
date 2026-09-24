@@ -1,0 +1,20 @@
+{
+  "name": "shipwright",
+  "displayName": "Shipwright",
+  "description": "Design -> adversarial review -> breakdown -> implement -> ship pipeline for Claude Code, with Jira sync, an enforced approval gate, a quality gate, budget protection and a live dashboard.",
+  "author": {
+    "name": "Harsh Dhussa",
+    "url": "https://github.com/HarshDhussa1008"
+  },
+  "homepage": "https://github.com/HarshDhussa1008/shipwright",
+  "repository": "https://github.com/HarshDhussa1008/shipwright",
+  "license": "MIT",
+  "keywords": [
+    "sdd",
+    "design-review",
+    "jira",
+    "workflow",
+    "quality-gate",
+    "sre"
+  ]
+}

@@ -4,49 +4,8 @@
       "Bash(git status)",
       "Bash(git diff*)",
       "Bash(git log*)",
-      "Bash(git add*)",
-      "Bash(git commit -m*)"
-    ]
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "python .claude/hooks/budget_sentinel.py",
-    "refreshInterval": 30000
-  },
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python .claude/hooks/session_start.py",
-            "timeout": 5000
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python .claude/hooks/quality_gate.py",
-            "timeout": 30000
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python .claude/hooks/stop_checklist.py",
-            "timeout": 10000
-          }
-        ]
-      }
+      "Bash(python -m pytest*)",
+      "Bash(python3 -m pytest*)"
     ]
   }
 }

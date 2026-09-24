@@ -1,145 +1,62 @@
-# Setup Guide
+# Setup guide
 
 ## Prerequisites
 
 | Requirement | Notes |
-|-------------|-------|
-| [Claude Code](https://claude.ai/code) | CLI, desktop app, or IDE extension |
-| Python 3.10+ | Must be on PATH in your project's venv |
-| `ruff` | `pip install ruff` — used by quality gate hook |
-| `mypy` | `pip install mypy` — used by quality gate hook |
-| Jira MCP (optional) | Required for Jira integration — see below |
-| Slack MCP (optional) | Required for deploy notifications |
+|---|---|
+| Claude Code | CLI, desktop app or IDE extension, recent enough for plugins |
+| Python 3.10+ | `python3`, `python` or `py -3` on PATH (or set `SHIPWRIGHT_PYTHON`) |
+| Git Bash (Windows) | Claude Code runs hooks through it; hooks invoke `run.sh` via `bash`, which Git Bash always provides — the pitfall is forward slashes: any command string referencing `run.sh` must not use a literal backslash path, which Git Bash's MSYS runtime silently mangles |
+| Your toolchain | Whatever `lint_command` / `typecheck_command` / `test_command` name — `/shipwright:doctor` checks them |
+| Jira MCP (optional) | The Atlassian remote MCP or the community `mcp-atlassian` server |
+| Slack MCP (optional) | For deploy notifications |
 
-## Installation
+## 1. Install the plugin
 
-### 1. Clone shipwright
+In Claude Code:
+```
+/plugin marketplace add HarshDhussa1008/shipwright
+/plugin install shipwright@shipwright
+```
+Then `/plugin` → **Marketplaces** → shipwright → **Enable auto-update** (third-party marketplaces default to off).
 
-```bash
-git clone https://github.com/HarshDhussa1008/shipwright
+## 2. Initialise a project
+
+Open Claude Code in the project and run `/shipwright:init`. It is safe to re-run.
+
+## 3. Team rollout (optional)
+
+`/shipwright:init --team`, then commit `.claude/settings.json`. Teammates who trust the folder are offered the install, with auto-update on. To host from your org, fork the repo and use `--marketplace-repo your-org/shipwright`.
+
+## Migrating from the copy-installed version (v1)
+
+v1 copied hooks into `.claude/hooks/` and wired them in `.claude/settings.json`. With the plugin installed those would fire twice, and several of them never worked (they read environment variables Claude Code does not set). Run:
+
+```
+/shipwright:init --migrate
 ```
 
-### 2. Run the installer
+It removes the legacy hook and statusline wiring (your own hooks are kept), deletes the framework-owned `.claude/hooks/*.py`, `.claude/tools/dashboard.py` and `.claude/session_id`, and adds any new `framework.json` settings. Your config, state, SDDs and memories are untouched. The skills v1 copied into `~/.claude/skills/{design,breakdown,ship,retro,dashboard,sdd-implementer}` can be deleted once you use the `/shipwright:*` versions.
 
-**macOS / Linux:**
-```bash
-cd shipwright
-chmod +x install.sh
-./install.sh --project-dir /path/to/your/project
-```
+## Jira
 
-**Windows:**
-```powershell
-cd shipwright
-.\install.ps1 -ProjectDir C:\path\to\your\project
-```
+1. Connect a Jira MCP server.
+2. In `.claude/framework.json`: `jira_integration: true`, `jira_project_key`.
+3. Check `jira_transitions` matches your workflow's **status names** (`/shipwright:ship` finds the transition that leads to that status).
+4. Name branches with the parent key (`feature/PAY-123-rate-limit`); `/shipwright:breakdown` asks if it can't find one.
 
-### 3. Configure your project
+The skills name the tools for both common servers (`getJiraIssue` / `jira_get_issue`, `createJiraIssue` / `jira_create_issue`, `transitionJiraIssue` / `jira_transition_issue`, `addCommentToJiraIssue` / `jira_add_comment`). Tasks under an Epic are created as Stories with the `parent` field.
 
-Edit `.claude/framework.json` in your project root:
+## Memory
 
-```json
-{
-  "project_name": "payments-api",
-  "jira_project_key": "PAY",
-  "jira_integration": true,
-  "slack_mcp_channel": "#deployments",
-  "slack_integration": false,
-  "build_command": "./build.sh staging",
-  "sdd_path": "docs/sdd",
-  "languages": ["python"]
-}
-```
-
-**Config fields:**
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `project_name` | `"my-project"` | Display name used in reports and Jira comments |
-| `jira_project_key` | `null` | Jira project key (e.g., `"PAY"`, `"BACKEND"`) |
-| `jira_integration` | `false` | Enable/disable all Jira steps |
-| `slack_mcp_channel` | `null` | Slack channel for deploy notifications |
-| `slack_integration` | `false` | Enable/disable Slack notifications |
-| `build_command` | (echo stub) | Shell command to build and deploy |
-| `test_command` | pytest | Test suite command, run by /ship Gate 1 |
-| `lint_command` | ruff | Linter with a `{file}` placeholder. `null` to skip |
-| `typecheck_command` | mypy | Type checker with a `{file}` placeholder. `null` to skip |
-| `gate_extensions` | `[".py"]` | File extensions the quality gate applies to |
-| `budget_alert_threshold` | `95` | Rate-limit percentage that trips the checkpoint directive |
-| `sdd_path` | `"docs/sdd"` | Directory where SDDs are saved (relative to project root) |
-| `memory_path` | `null` | Override memory directory (auto-derived if null) |
-| `languages` | `["python"]` | Informational tag for the project's languages |
-
-### 4. Fill in CLAUDE.md
-
-`CLAUDE.md` was copied from the template. Replace all `<PLACEHOLDER>` sections with your project's actual details. Claude Code reads this file at the start of every session.
-
-### 5. Verify hooks and the statusline are wired
-
-Open `.claude/settings.json` and confirm:
-- `UserPromptSubmit` → `session_start.py`
-- `PostToolUse` (Edit|Write) → `quality_gate.py`
-- `Stop` → `stop_checklist.py`
-- `statusLine` → `budget_sentinel.py`
-
-If you already had a `settings.json`, merge both the `hooks` and `statusLine` sections manually.
-
-The `statusLine` entry is not cosmetic: it is the only surface that receives `rate_limits`, so without it the 95% budget alert never fires.
-
-### 5b. Non-Python projects
-
-The quality gate is command-driven. Point it at your toolchain:
-
-```json
-{
-  "lint_command": "npx eslint --fix {file}",
-  "typecheck_command": "npx tsc --noEmit",
-  "gate_extensions": [".ts", ".tsx"]
-}
-```
-
-Set either command to `null` to skip that check entirely.
-
-## Jira MCP Setup (optional)
-
-1. Follow the [Atlassian MCP setup guide](https://github.com/anthropics/anthropic-tools/tree/main/mcp-atlassian)
-2. Set `jira_integration: true` in `framework.json`
-3. Set `jira_project_key` to your Jira project key
-
-The framework uses these MCP tools: `getJiraIssue`, `createJiraIssue`, `transitionJiraIssue`, `addCommentToJiraIssue`, `searchJiraIssuesUsingJql`.
-
-## How the memory system works
-
-Claude Code automatically creates a project memory directory at:
-```
-~/.claude/projects/<project-slug>/memory/
-```
-
-The `project-slug` is derived from your project's absolute path (path separators replaced with `-`). The `session_start.py` hook auto-detects this path — you don't need to configure it unless you want to override it with `memory_path` in `framework.json`.
-
-Memories are `.md` files with YAML frontmatter (`type: user|feedback|project|reference`). The `/retro` and `/design` skills write them automatically. You can also write them manually with the `/remember` command.
+Claude Code keeps project memory in `~/.claude/projects/<project-folder>/memory/`, where `<project-folder>` is the absolute path with every non-alphanumeric character replaced by `-`. The hooks locate it from the session's transcript path, so no configuration is needed; set `memory_path` to override. `/shipwright:design`, `/shipwright:retro` and `/shipwright:remember` write memories; the SessionStart hook re-injects the three most relevant each session.
 
 ## The dashboard
 
-```bash
-python .claude/tools/dashboard.py            # write .claude/dashboard.html
-python .claude/tools/dashboard.py --serve    # localhost, 10s auto-refresh
-```
+`/shipwright:dashboard` writes `.claude/dashboard.html`; `/shipwright:dashboard serve` serves it on `127.0.0.1:7399` with live refresh. Files dropped in `.claude/inbox/` are listed with paths ready to reference.
 
-Or just `/dashboard`. It is read-only, stdlib-only, and binds to `127.0.0.1`. Files dropped in `.claude/inbox/` are listed with repo-relative paths ready to reference in a prompt.
+## Troubleshooting
 
-## Branch naming convention
-
-The `/breakdown` skill derives the Jira ticket ID from the git branch name. For example:
-- Branch `PROJ-123` → parent Jira key `PROJ-123`
-- Branch `feature/PROJ-123-add-rate-limiting` → also works (regex extracts `PROJ-123`)
-
-If your branch name doesn't contain a Jira ticket ID and `jira_integration: true`, `/breakdown` will ask you for one.
-
-## Adding a custom skill
-
-1. Create a directory: `~/.claude/skills/<skill-name>/SKILL.md`
-2. Write your skill as a Markdown file (role, interaction protocol, rules)
-3. It will be available as `/<skill-name>` in Claude Code immediately
-
-See the existing `skills/` directory for examples of how to structure a skill.
+- Something doesn't fire → `/shipwright:doctor`.
+- See hook activity → run `claude --debug` and look for `shipwright` lines, or set `SHIPWRIGHT_DEBUG=1` to surface hook exceptions.
+- Approval gate in the way of unrelated work → `/shipwright:checkpoint clear-plan`, or `approval_gate: false`.

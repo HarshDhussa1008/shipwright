@@ -1,125 +1,85 @@
-# /ship — Full Deploy Pipeline
+---
+name: ship
+description: Gated deploy pipeline — documentation, tests, type check, independent code review, build — then Jira transitions and Slack notification. Only run when the user explicitly asks to ship or deploy.
+argument-hint: <env, e.g. staging | prod>
+disable-model-invocation: true
+---
+
+# /shipwright:ship — Gated Deploy Pipeline
 
 ## Role
 
-You are a Deployment Engineer running a gated pipeline from clean code to a live environment. You enforce quality gates in strict order. You never skip gates. You capture every failure as a memory.
+You are a Deployment Engineer running gates in strict order. You never skip a gate. Every failure becomes a memory.
 
-## Invocation
-
-```
-/ship <env>
-```
-
-- `env`: `staging` | `prod` (or any environment name meaningful to your project)
+Environment: `$ARGUMENTS` (`staging` | `prod` | any name your project uses; anything other than `prod` follows the staging rules below).
 
 ## Interaction Protocol
 
-### Step 0 — Compact + confirm + load config
-If the conversation is > 20 turns old, run `/compact` first.
-Read `.claude/framework.json` to get `build_command`, `jira_integration`, `slack_integration`, `project_name`.
+### Step 0 — Load config + confirm
+Read `.claude/framework.json`: `build_command`, `test_command`, `project_typecheck_command`, `jira_integration`, `jira_transitions`, `slack_integration`, `slack_mcp_channel`, `project_name`.
+
+If `build_command` is still the `echo '[ship] Configure…'` placeholder, stop and tell the user to set it (or run `/shipwright:doctor`).
+
 Confirm: "Shipping **<project_name>** to **<env>**. Proceed? (yes/no)"
 
-### Step 1 — Gate 0: Documentation
+### Gate 0 — Documentation (cheap, first)
+- The SDD at `task_state.json.sdd_path` exists.
+- `## Amendments` has ≤ 5 entries (over → fold them in first).
+- `.claude/amendments_pending.json` has no unflushed `candidates`.
+- No task has `needs_recheck: true`.
+- No `Critical` risk is unmitigated.
 
-Cheap, runs first, catches the drift that accumulates during the bug loop.
+FAIL on prod → hard stop. FAIL on staging → warn with the list, continue.
 
-- The SDD referenced by `task_state.json.sdd_path` exists.
-- Its `## Amendments` section is at or under the 5-entry compaction threshold. Over it → fold them in before shipping.
-- `.claude/amendments_pending.json` has no unflushed `candidates`. Unflushed means the SDD is knowingly stale.
-- No task is left `needs_recheck: true` — an amendment invalidated its plan and nobody looked.
-- No `Critical` risk in the Risk Register is unmitigated.
+### Gate 1 — Tests
+Run `test_command`. Record the UTC time in `task_state.json.last_test_run`.
+FAIL → hard stop on every env; write a `project` memory naming the failing tests.
+Checkpoint: `active_skill: "ship"`, `phase: 1`, `phase_label: "Tests passed"`, `next_step: "Gate 2: type check"`.
 
-- **PASS →** Gate 1
-- **FAIL (prod) →** hard stop. The design record is part of the deliverable.
-- **FAIL (staging) →** warn with the list, proceed.
+### Gate 2 — Type check
+Run `project_typecheck_command` (skip with a note if null).
+FAIL on prod → hard stop + memory. FAIL on staging → warn, write memory, continue.
+Checkpoint phase 2.
 
-### Step 2 — Gate 1: Tests
-Run the project's test suite. Check `.claude/framework.json` for a `test_command`; default to:
-```bash
-python -m pytest . -v --tb=short
+### Gate 3 — Independent review
+Find the base: `git merge-base HEAD origin/HEAD` (fall back to `main`, then `master`). Spawn in parallel, each given only the diff range, the SDD path, and `task_state.json`:
+- `shipwright:code-reviewer` — always
+- `shipwright:test-auditor` — always; verifies every mitigated risk has a test that exercises it
+- `shipwright:security-reviewer` — when the diff touches auth, secrets, crypto, input parsing, SQL, file paths, or public endpoints
+
+Merge their findings, deduplicated, most severe first.
+Any `critical` on prod → hard stop, list findings. On staging → warn, list, continue.
+Checkpoint phase 3.
+
+### Gate 4 — Build / deploy
+Run `build_command`. Keep only the last 50 lines of output.
+FAIL → hard stop on every env; write a memory with the error. Do not retry automatically.
+Checkpoint phase 4.
+
+### Step 5 — Post-deploy sync
+
+**a) Jira (only if `jira_integration`):** target status = `jira_transitions[<env>]`. If the env has no entry, comment only.
+For each task with a `jira_key`, and for `parent_jira_key`: use the Jira MCP (`getTransitionsForJiraIssue` + `transitionJiraIssue`, or `jira_get_transitions` + `jira_transition_issue`) to find the transition whose target status name matches, and apply it. No match → log `[JIRA] no transition to "<status>" for <key>` and continue.
+Comment on the parent:
 ```
-- **PASS →** proceed to Gate 2
-- **FAIL →** hard stop. Write a project memory capturing which tests failed. Say: "Tests failed. Fix before retrying /ship."
-
-Write checkpoint (Phase 1):
-```json
-{ "active_skill": "ship", "phase": 1, "phase_label": "Tests passed", "next_step": "Gate 2: type check" }
-```
-
-### Step 3 — Gate 2: Type check
-```bash
-python -m mypy . --ignore-missing-imports
-```
-- **PASS →** proceed
-- **FAIL (prod) →** hard stop. Write memory. Fix required.
-- **FAIL (staging) →** warn, log to memory, proceed with flag `--type-errors-present`
-
-Write checkpoint (Phase 2).
-
-### Step 4 — Gate 3: Code review
-Run `/review` (code-review skill) on `git diff <default-branch>...HEAD`.
-- **No critical findings →** proceed
-- **Critical findings (prod) →** hard stop. List findings. Fix required.
-- **Critical findings (staging) →** warn with list, proceed
-
-Write checkpoint (Phase 3).
-
-### Step 5 — Gate 4: Build
-Run the `build_command` from `.claude/framework.json`:
-```bash
-<build_command>
-```
-Capture last 50 lines of stdout only (not full build log).
-- **PASS →** proceed
-- **FAIL →** hard stop for both envs. Write a project memory with the build error. Do not retry automatically.
-
-Write checkpoint (Phase 4).
-
-### Step 6 — Post-deploy sync
-
-**a) Jira sync (only if `jira_integration: true`):**
-Read `.claude/task_state.json` for `parent_jira_key` and all task `jira_key` values.
-
-For each task with a non-null `jira_key`:
-- Staging → transition to **"In Review"**
-- Prod → transition to **"Done"**
-
-Transition parent Jira ticket:
-- Staging → **"In Review"**
-- Prod → **"Done"**
-
-Add comment on parent:
-```
-🚀 *Deployed to <env> by Claude Code*
-Branch: <branch> | <timestamp>
-Subtasks closed: <PROJ-77>, <PROJ-78>, ...
+🚀 Deployed to <env> by Claude Code (shipwright)
+Branch: <branch> | <timestamp> | Tasks: <keys>
 ```
 
-If any transition fails: log `[JIRA] Could not transition <key>` and continue.
+**b) Slack (only if `slack_integration`):** post `✅ <project_name> deployed to <env> — <branch> — <timestamp>` to `slack_mcp_channel`.
 
-**b) Slack notification (only if `slack_integration: true`):**
-Post via MCP Slack to `slack_mcp_channel`:
+**c) Local cleanup:** write `{}` to `.claude/checkpoint.json`. On prod, mark every task `completed` in `task_state.json`.
+
+### Step 6 — Failure memory + Jira comment
+Every failed gate writes a `project` memory (see /shipwright:remember for the format) and, if Jira is on, comments on the parent:
 ```
-✅ <project_name> deployed to <env> — <branch> — <timestamp>
-```
-
-**c) Local cleanup:**
-- Clear `checkpoint.json` (write `{}`)
-- Mark all tasks in `task_state.json` as `completed` if env is `prod`
-
-### Step 7 — Failure memory + Jira comment
-Every failed gate writes a project memory. No silent failures.
-
-If `jira_integration: true`, also post a comment on the parent Jira ticket:
-```
-❌ *Deploy to <env> failed at Gate <N>: <gate name>*
-Error: <brief summary>
+❌ Deploy to <env> failed at Gate <N>: <gate name>
+Error: <one-line summary>
 Branch: <branch>
 ```
+Update `last_memory_write` in `task_state.json`.
 
-After writing: update `last_memory_write` in `task_state.json`.
-
-## Token Budget Rules
-- Capture last 50 lines of build output only
-- Extract only ticket ID from branch name — don't fetch full ticket for post-deploy
-- Gate results written to checkpoint immediately; don't hold all gate results in context
+## Rules
+- /shipwright:ship is the only skill that transitions Jira status.
+- Never pass `--no-verify`, skip hooks, or edit tests to make a gate pass.
+- Keep gate results in the checkpoint, not in context.

@@ -3,6 +3,8 @@
   "parent_jira_key": null,
   "sdd_path": null,
   "approved": false,
+  "approved_at": null,
+  "approved_by": null,
   "retro_offered": false,
   "last_memory_write": null,
   "last_test_run": null,

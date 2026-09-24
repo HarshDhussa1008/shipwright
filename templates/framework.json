@@ -1,16 +1,28 @@
 {
+  "schema_version": 2,
   "project_name": "my-project",
   "jira_project_key": null,
   "jira_integration": false,
+  "jira_subtask_type": "Subtask",
+  "jira_transitions": {
+    "staging": "In Review",
+    "prod": "Done"
+  },
   "slack_mcp_channel": null,
   "slack_integration": false,
   "build_command": "echo '[ship] Configure build_command in .claude/framework.json'",
   "test_command": "python -m pytest . -v --tb=short",
   "lint_command": "python -m ruff check --fix {file}",
   "typecheck_command": "python -m mypy {file} --ignore-missing-imports --no-error-summary",
-  "gate_extensions": [".py"],
+  "project_typecheck_command": "python -m mypy . --ignore-missing-imports",
+  "gate_extensions": [
+    ".py"
+  ],
+  "approval_gate": true,
   "budget_alert_threshold": 95,
   "sdd_path": "docs/sdd",
   "memory_path": null,
-  "languages": ["python"]
+  "languages": [
+    "python"
+  ]
 }

@@ -1,81 +1,65 @@
-# /retro — Structured Feature Retrospective
+---
+name: retro
+description: Structured feature retrospective once implementation finishes — diffs plan vs. commits, asks four questions, writes durable memories, appends Lessons Learned to CLAUDE.md, flags stale memories, and comments (never transitions) on Jira. Use when the user wants a retro or when all shipwright tasks are complete.
+---
+
+# /shipwright:retro — Structured Feature Retrospective
 
 ## Role
 
-You facilitate a structured retrospective, offered as soon as implementation finishes — before `/ship`, not after. You capture learnings as durable memories, update CLAUDE.md, and flag stale memories. Minimum output: 3 new memory files.
+You facilitate a retrospective as soon as implementation finishes — before /shipwright:ship, not after. You turn the answers into durable memories and CLAUDE.md lessons, and flag stale memories.
 
-**Jira status transitions are not your job.** `/ship` owns Jira lifecycle exclusively (staging → "In Review", prod → "Done"), gated by an actual deploy. `/retro` runs before a deploy has necessarily happened — transitioning tickets to "Done" here would close work that hasn't shipped, and would fight `/ship`'s own transition on the next deploy. If `jira_integration` is true, `/retro` only ever adds a wrap-up comment — it never calls a transition.
+**Never transition Jira status here.** /shipwright:ship owns the Jira lifecycle, gated by a real deploy. /shipwright:retro only comments.
 
 ## Interaction Protocol
 
-### Step 1 — Load config + build context (parallel)
-Read `.claude/framework.json` to check `jira_integration` and `project_name`.
+### Step 1 — Context (in parallel)
+- `.claude/framework.json`: `jira_integration`, `project_name`, `memory_path`
+- `git log <default-branch>...HEAD --oneline` — what was actually built
+- `.claude/task_state.json` — the plan, Jira keys
+- If Jira is on: search `issue in (<jira keys>)` (`searchJiraIssuesUsingJql` / `jira_search`) for `key`, `status`, `resolution`
 
-Run in parallel:
-- `git log <default-branch>...HEAD --oneline` — what was actually shipped
-- Read `.claude/task_state.json` — planned tasks + Jira keys
+Diff plan vs. commits: unimplemented tasks, unplanned commits, amendments count from the SDD.
 
-If `jira_integration: true`:
-- MCP Atlassian batch fetch: `issue in (<all jira_keys>)` — get `key`, `status.name`, `resolution` for each subtask
-  Diff planned tasks vs actual commits — note gaps (unimplemented tasks, unplanned commits).
+Open with a 3-line summary of that diff — it is the evidence the questions are about.
 
-### Step 2 — Ask 4 structured questions
-Ask one at a time, waiting for each answer:
+### Step 2 — Four questions, one at a time
+1. "What was harder than estimated, and why?" → `feedback` memory on estimation
+2. "Anything you'd design differently now (architecture, data model, API shape)?" → `project` memory on design regrets
+3. "Any pattern that should never be repeated?" → `feedback` anti-pattern memory
+4. "Any pattern that worked well and should be repeated?" → positive `feedback` memory
 
-1. "What was harder than estimated, and why?"
-   → Maps to **feedback memory** on effort estimation
-2. "Is there anything you'd design differently now? (architecture, data model, API shape)"
-   → Maps to **project memory** on design regrets
-3. "Any patterns that should never be repeated? (code patterns, mistakes, wrong approaches)"
-   → Maps to **feedback memory** as anti-patterns
-4. "Any patterns that worked well and should be actively repeated?"
-   → Maps to **positive feedback memory** (write these too — not just corrections)
+### Step 3 — Write memories
+Write one memory per **actionable** answer — skip answers with nothing reusable rather than padding. Use the /shipwright:remember format (frontmatter `name`, `description`, `type`; body with **Why:** and **How to apply:**), file name `retro_<branch-slug>_<slug>.md`, and add each to `MEMORY.md`.
 
-### Step 3 — Write memories (minimum 3)
-For each answer that yields an actionable insight:
-- Derive project slug from REPO_ROOT or `memory_path` in framework.json
-- Write to `~/.claude/projects/<project-slug>/memory/retro_<branch>_<slug>.md`
-- Use correct type (feedback or project)
-- Include **Why:** and **How to apply:** lines
-- Update MEMORY.md index
-
-Update `last_memory_write` in `task_state.json` to current ISO timestamp.
+Update `last_memory_write` in `task_state.json`.
 
 ### Step 4 — Update CLAUDE.md
-Append to the "Lessons Learned" section in `CLAUDE.md`:
+Append under `## Lessons Learned`:
 ```markdown
-## Lessons Learned
-
 ### <branch> (<date>)
-- <1-line summary of each anti-pattern or key decision>
+- <one line per anti-pattern or key decision>
 ```
-Trim the section if it exceeds 20 entries (remove the oldest 5).
+If the section exceeds 20 entries, remove the oldest 5.
 
-### Step 5 — Flag stale memories
-Scan the project memory directory for `.md` files with `mtime` older than 90 days. For each:
-- Print: `[STALE] <filename> — last modified <date>`
-- Ask: "Archive, update, or keep?"
+### Step 5 — Stale memories
+List memory files not modified in 90+ days: `[STALE] <file> — last modified <date>`, and ask once for the batch: archive, update, or keep.
 
-### Step 6 — Comment on Jira (only if `jira_integration: true`, no status transitions)
-Add a comment on the **parent ticket** (`parent_jira_key`) — never transition its status, that's `/ship`'s call to make on an actual deploy:
+### Step 6 — Jira comment (if enabled; never a transition)
+On `parent_jira_key`:
 ```
-🔄 *Retro run — build complete, not yet shipped*
-Branch: <branch>
-Memories written: <count>
-Next: /ship <env> when ready to deploy — Jira will transition then, not here.
+🔄 Retro complete — built, not yet shipped
+Branch: <branch> | Memories written: <n>
+Jira status changes on /shipwright:ship.
 ```
 
 ### Step 7 — Summary
-Print:
 ```
-Retro complete. Wrote <N> memories. CLAUDE.md updated. <M> stale memories flagged.
-Jira: comment posted on <parent_jira_key> (no status change — /ship owns that).
-Next: /ship <env> when ready to deploy.
+Retro complete. <N> memories written. CLAUDE.md updated. <M> stale memories flagged.
+Next: /shipwright:ship <env> when ready.
 ```
-(Omit the Jira line if `jira_integration: false`.)
 
 ## Rules
-- Never skip the 4 questions even if context is long — use `/compact` to free up space first
-- Write positive feedback memories (what worked) — not just corrections
-- Do not write memories for things already in CLAUDE.md "Do Not Do" section
-- **Never call a Jira transition from this skill.** Comment only. `/ship` is the single owner of Jira status — two skills racing to set status on the same ticket is exactly the kind of drift this framework exists to prevent.
+- Never skip the four questions.
+- Write what worked, not only corrections.
+- Do not duplicate what CLAUDE.md's "Do Not Do" already says.

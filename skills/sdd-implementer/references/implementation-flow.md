@@ -20,7 +20,7 @@ src/
     test_models.py
     test_service.py
 ```
-Wait for explicit user confirmation before proceeding.
+The plan was already approved at breakdown; show the structure for the current task and proceed.
 
 ## Phase 3 — Implement (dependency order)
 Implement in this order:
@@ -30,7 +30,7 @@ Implement in this order:
 4. API / interface layer (depends on service)
 5. Tests (can be written alongside each layer)
 
-After each file: run the quality gate mentally — does it satisfy the standards in `python-standards.md`?
+After each file the quality-gate hook lints and type-checks it and reports findings back to you; fix them before moving on.
 
 ## Phase 4 — Pre-Commit Audit
 Before declaring implementation complete, verify:
@@ -51,5 +51,5 @@ Implementation complete.
 Files created: <list>
 Files modified: <list>
 Tests: <count> test functions across <count> files
-Next: run /ship staging
+Next: /shipwright:retro, then /shipwright:ship staging
 ```

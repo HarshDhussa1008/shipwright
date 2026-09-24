@@ -1,161 +1,112 @@
 # shipwright
 
-A structured engineering pipeline for [Claude Code](https://claude.ai/code). Design → Break down → Implement → Ship — with optional Jira integration at every step.
-
-## What it is
-
-A set of Claude Code **skills** (slash commands), **hooks** (automatic enforcement), a **statusline sentinel**, and **state files** that turn Claude Code into a full engineering pipeline:
+A structured engineering pipeline for [Claude Code](https://code.claude.com), packaged as a plugin. Design → adversarial review → break down → implement → ship, with Jira sync, an enforced approval gate, a quality gate on every edit, rate-limit protection, and a live dashboard.
 
 ```
-/design  →  /breakdown  →  implement  →  /retro   →  /ship
-(harden)     (Jira sync)   (bug loop)    (offered    (gates + Jira
-                                          on done)     transitions)
+/shipwright:design  →  /shipwright:breakdown  →  "approved"  →  implement  →  /shipwright:retro  →  /shipwright:ship
+ (SDD + hardening)      (tasks + Jira)            (you, not     (bug loop)     (memories)            (gates + Jira
+                                                    Claude)                                            transitions)
 ```
 
-`/ship` is the sole owner of Jira status transitions — staging moves subtasks to "In Review," prod moves them to "Done." `/retro` runs before a deploy has necessarily happened, so it only ever comments, never transitions; closing tickets there would fight `/ship`'s own transition on the next deploy.
+**The design principle:** you type commands only at the moments you deliberately step back. Everything else — feeding lint/type findings back after each edit, keeping the SDD honest, catching drift, protecting work before a rate-limit breach, re-injecting past lessons — runs in hooks while you stay in the implementation loop.
 
-The design principle: **you type commands only at the few moments you deliberately step back.** Everything else — capturing learnings, keeping the design doc honest, detecting drift, protecting work against a rate-limit breach — runs passively in hooks while you stay in the implementation loop.
+## Install
 
-### Skills
+```bash
+# in Claude Code
+/plugin marketplace add HarshDhussa1008/shipwright
+/plugin install shipwright@shipwright
+/shipwright:init
+```
+
+or from a shell: `./install.sh --project-dir /path/to/project` (Windows: `.\install.ps1 -ProjectDir C:\path\to\project`).
+
+`/shipwright:init` detects your stack (Python, TypeScript/JavaScript, Go, Rust), writes `.claude/framework.json`, seeds state files and `CLAUDE.md`, wires the budget statusline, and asks only for what it cannot detect (deploy command, Jira project, transition names). `/shipwright:doctor` checks that every configured command actually runs.
+
+### Roll it out to a team
+
+```
+/shipwright:init --team
+```
+
+This adds the marketplace (with `autoUpdate: true`) and `enabledPlugins` to the repo's `.claude/settings.json`. Commit it. When a teammate trusts the folder, Claude Code offers them the one-line install; from then on they receive every update automatically. For org-wide enforcement, put the same keys in [managed settings](https://code.claude.com/docs/en/plugin-marketplaces) and restrict sources with `strictKnownMarketplaces`. To distribute from an internal fork, pass `--marketplace-repo your-org/shipwright`.
+
+### Staying in sync
+
+| Piece | How it updates |
+|---|---|
+| Skills, agents, hooks, dashboard | Plugin marketplace. `plugin.json` has no `version`, so every commit to the marketplace repo is a new version. Auto-update is on for team installs; individuals enable it once in `/plugin` → Marketplaces. Pin releases by adding `version` to `plugin.json`. |
+| Budget statusline | Plugins cannot own a statusline, so init points `settings.local.json` at a copy in the plugin's data directory. The SessionStart hook refreshes that copy whenever the plugin changes. |
+| `framework.json` | New settings are added with defaults at session start. Your values are never overwritten. |
+| `.claude/.gitignore` | New runtime-state patterns are appended at session start. |
+
+## Commands
 
 | Command | What it does |
-|---------|-------------|
-| `/design` | Generate an SDD, then harden it: a fresh-context subagent attacks it against 10 failure classes until it converges |
-| `/breakdown` | Decompose a hardened SDD into atomic tasks + Jira subtasks. Refuses un-hardened SDDs |
-| `sdd-implementer` | Convert an SDD into production code, with the bug loop as a first-class state |
-| `/ship` | Gated deploy: docs → tests → type check → review → build → Jira transition + Slack sync |
-| `/retro` | Offered automatically once all tasks complete. Structured retrospective → memories → CLAUDE.md update → Jira comment (never a status transition — that's `/ship`'s job) |
-| `/dashboard` | Read-only visual view of pipeline state, risks, amendments, budget |
+|---|---|
+| `/shipwright:design <req \| KEY>` | Writes an SDD, then the `sdd-adversary` agent attacks it in a fresh context across 10 failure classes. Revise and re-attack, max 3 passes. |
+| `/shipwright:breakdown <sdd>` | Refuses unhardened SDDs. ≤ 8 tasks, dependency-ordered, each tied to the risks it mitigates. Creates Claude Code tasks and Jira issues. |
+| *reply* `approved` | A hook sets the approval flag from **your** message. Until then source edits are denied, and Claude cannot approve its own plan. |
+| `sdd-implementer` | Task-by-task implementation. Stays in the bug loop, silently stages SDD amendments, checkpoints continuously. |
+| `/shipwright:retro` | Plan vs. actual, four questions, memories, CLAUDE.md lessons, Jira comment (never a transition). |
+| `/shipwright:ship <env>` | Docs → tests → types → review (`code-reviewer`, `test-auditor`, and `security-reviewer` when relevant) → build → Jira transitions → Slack. Never auto-invoked. |
+| `/shipwright:dashboard [serve]` | Read-only visual state: risks, tasks, amendments, budget trend, patterns, inbox. |
+| `/shipwright:resume` | Continue from the checkpoint after an interruption or a rate-limit reset. |
+| `/shipwright:checkpoint [show\|save\|clear\|clear-plan]` | Manage the checkpoint or abandon a plan. |
+| `/shipwright:remember [text]` | Write a typed memory that re-enters at session start and design time. |
+| `/shipwright:init`, `/shipwright:doctor` | Set up, migrate, diagnose. |
 
-There is deliberately **no `/standup`** and **no `/evolve`** — their value is delivered passively by hooks instead of requiring you to remember a command.
+## Hooks (automatic)
 
-### Hooks and the sentinel (automatic)
+| Hook | Event | Reaches Claude via | What it does |
+|---|---|---|---|
+| `session_start.py` | SessionStart (startup, resume, clear, compact) | stdout context | Relevant memories, plan state, interrupted checkpoint, budget-reset status; syncs statusline and config |
+| `prompt_submit.py` | UserPromptSubmit | stdout context | Captures your "approved"; relays an undelivered budget breach |
+| `approval_gate.py` | PreToolUse (Edit/Write/MultiEdit/NotebookEdit) | `permissionDecision: deny` | Blocks source edits while the plan awaits approval; blocks self-approval |
+| `quality_gate.py` | PostToolUse (Edit/Write/MultiEdit) | `additionalContext` | Runs your lint + type commands on the edited file and returns the findings; tracks recurring codes |
+| `stop_checklist.py` | Stop | `decision: block` (Claude must act) / `systemMessage` (you should know) | Budget breach, staged amendments, stale checkpoint; drift, open tasks, uncommitted files, retro offer |
+| `budget_sentinel.py` | statusLine | budget.json → the hooks above | The only surface that sees `rate_limits`; trips at `budget_alert_threshold` |
 
-| Component | Trigger | What it does |
-|-----------|---------|-------------|
-| `session_start.py` | First message of each session | Injects context-relevant memories, the interrupted checkpoint, and budget-reset status |
-| `quality_gate.py` | After every file edit | Runs the configured linter + type checker, tracks the anti-pattern registry |
-| `stop_checklist.py` | When Claude finishes responding | Budget directive, staged amendments, task drift, unstaged files, memory nudges |
-| `budget_sentinel.py` | Statusline, every render | Reads `rate_limits` and trips an alert at 95% so work is checkpointed before a breach |
+Every hook is a no-op in projects without `.claude/framework.json`, so installing the plugin at user scope never affects other repos.
 
 ## How it stays honest
 
-- **The SDD is a living document.** When a bug reveals a design gap, `sdd-implementer` stages an amendment and folds it in at the next pause — no interruption mid-loop, no silently rotting doc. Past 5 amendments it forces compaction into the body.
-- **Amendments can invalidate the plan.** A gap found in task 3 flags task 4 with `needs_recheck` rather than leaving the task graph stale.
-- **Design is hardened before code exists.** The adversarial pass runs in a subagent that sees only the SDD, so it cannot converge on its own reasoning. Coverage of all 10 failure classes is the exit condition, capped at 3 passes.
-- **Evolution is passive.** Style corrections and repeated anti-patterns accumulate as memories and re-enter at design time. Nothing rewrites its own skill files.
-- **Human in the loop at design, autonomous at implementation.** `approved: false` in `task_state.json` blocks code generation until you confirm the plan; after that, implementation runs without process questions.
-
-## Prerequisites
-
-- [Claude Code](https://claude.ai/code) installed and authenticated
-- Python 3.10+ in your project's virtual environment
-- `ruff` and `mypy` installed (for the quality gate hook)
-- **Optional:** [Atlassian MCP](https://github.com/anthropics/anthropic-tools/tree/main/mcp-atlassian) for Jira integration
-- **Optional:** Slack MCP for deploy notifications
-
-## Installation
-
-### macOS / Linux
-
-```bash
-git clone https://github.com/HarshDhussa1008/shipwright
-cd shipwright
-chmod +x install.sh
-./install.sh --project-dir /path/to/your/project
-```
-
-### Windows (PowerShell)
-
-```powershell
-git clone https://github.com/HarshDhussa1008/shipwright
-cd shipwright
-.\install.ps1 -ProjectDir C:\path\to\your\project
-```
-
-The installer:
-1. Copies skills to `~/.claude/skills/` (user-level, available in all projects)
-2. Copies the `.claude/` directory into your project (hooks + state files)
-3. Copies `.claude/settings.json` with hook wiring (if one already exists, prints instructions to merge manually)
+- **Design is hardened before code exists.** The adversary sees only the SDD, so it cannot converge on the author's reasoning. Coverage of all 10 classes is the exit condition.
+- **The human checkpoint is enforced.** The plan cannot be approved by the agent, and code cannot be written before approval.
+- **The SDD is a living document.** Design gaps found while fixing bugs are staged as amendments, folded in at the next pause, and compacted after 5. Amendments mark affected tasks `needs_recheck`.
+- **Mitigations are traceable.** Tasks record which risks they mitigate; the `test-auditor` blocks a prod ship when a Critical risk has no test that would fail without its mitigation.
+- **Evolution is passive.** Corrections and recurring lint codes become memories that re-enter at design time. Nothing rewrites its own skill files.
+- **One owner for Jira status.** Only `/shipwright:ship` transitions tickets, using the status names in `jira_transitions`.
 
 ## Configuration
 
-After installation, edit `.claude/framework.json` in your project root:
+`.claude/framework.json` (created by init). The key fields:
 
-```json
-{
-  "project_name": "my-project",
-  "jira_project_key": "PROJ",
-  "jira_integration": true,
-  "slack_mcp_channel": "#deployments",
-  "slack_integration": false,
-  "build_command": "./build.sh",
-  "test_command": "python -m pytest . -v --tb=short",
-  "lint_command": "python -m ruff check --fix {file}",
-  "typecheck_command": "python -m mypy {file} --ignore-missing-imports --no-error-summary",
-  "gate_extensions": [".py"],
-  "budget_alert_threshold": 95,
-  "sdd_path": "docs/sdd",
-  "languages": ["python"]
-}
+| Field | Default | Purpose |
+|---|---|---|
+| `test_command` / `build_command` | detected / placeholder | Ship gates 1 and 4 |
+| `lint_command` / `typecheck_command` | detected | Per-edit quality gate; `{file}` is the edited file; `null` to skip |
+| `project_typecheck_command` | detected | Ship gate 2 |
+| `gate_extensions` | detected | Which edits the quality gate checks |
+| `approval_gate` | `true` | Enforce approval before source edits |
+| `jira_integration`, `jira_project_key` | `false`, `null` | Jira sync (Atlassian remote MCP or mcp-atlassian) |
+| `jira_subtask_type` | `"Subtask"` | Issue type for tasks under a non-Epic parent |
+| `jira_transitions` | `{"staging": "In Review", "prod": "Done"}` | Target status per environment |
+| `budget_alert_threshold` | `95` | Rate-limit % that triggers the checkpoint directive |
+| `sdd_path` | `"docs/sdd"` | Where SDDs live |
+| `memory_path` | `null` | Override the memory directory |
+
+## Development
+
+```bash
+claude --plugin-dir .          # run Claude Code with this checkout as the plugin
+python -m pytest -q            # hook contract, packaging and bootstrap tests
+claude plugin validate .
 ```
 
-Set `jira_integration: false` to use the framework without Jira — all Jira steps are skipped gracefully.
+CI runs the tests on Linux, macOS and Windows with Python 3.10 and 3.13, plus `claude plugin validate`.
 
-`lint_command` / `typecheck_command` take a `{file}` placeholder, so the quality gate works on any toolchain — swap in `eslint`, `tsc`, `golangci-lint`, `clippy`, whatever your project uses, and set `gate_extensions` to match. Set either to `null` to skip it.
-
-## Usage
-
-### Full pipeline
-
-```
-# 1. Design: generate an SDD and harden it against 10 failure classes
-/design PROJ-123
-/design "Add rate limiting to the payments API"
-
-# 2. Break down: decompose the hardened SDD into tasks (+ Jira subtasks)
-/breakdown docs/sdd/rate-limiting.md
-
-# 3. Approve: review the task list, then just say "approved"
-#    (this flips approved:true — there is no /approve command)
-
-# 4. Implement: sdd-implementer runs task-by-task, staying in the bug loop
-
-# 5. Deploy, when there is an actual deploy to make
-/ship staging
-/ship prod
-
-# 6. End of feature
-/retro
-```
-
-You never need to remember what comes next: every skill ends with the literal next command to type, and `session_start` replays it from the checkpoint if you were interrupted.
-
-### While working
-
-```
-/dashboard        # visual state: risks, tasks, amendments, budget
-/resume           # continue an interrupted session from checkpoint
-```
-
-Drop files into `.claude/inbox/` and they appear in the dashboard with paths ready to reference — the CLI's file-upload gap, bridged without any upload plumbing.
-
-## Surviving a rate-limit breach
-
-`budget_sentinel.py` runs as the statusline, which is the only local surface that receives `rate_limits` (hooks do not get them). It records 5-hour and 7-day headroom to `budget.json` on every render and trips at `budget_alert_threshold`. The Stop hook relays that once as a directive to checkpoint immediately with the literal next action — file and line — so the session can be resumed cold after the window resets. `session_start` then reports whether the window has actually reset.
-
-Requires a claude.ai Pro or Max subscription; without one the sentinel degrades to context-window and git info only.
-
-## Project CLAUDE.md
-
-Copy `CLAUDE.md.template` to your project root as `CLAUDE.md` and fill in the placeholders. Claude Code reads this file at the start of every session to understand your project's conventions.
-
-## How it works
-
-- **Skills** are Markdown files that Claude Code loads as slash commands. They contain role definitions, step-by-step protocols, and quality rules.
-- **Hooks** are Python scripts that Claude Code executes automatically on specific events (file edits, session start, response end).
-- **State files** (`checkpoint.json`, `task_state.json`) persist pipeline state across sessions so work survives interruptions.
-- **Memory** files in `~/.claude/projects/<slug>/memory/` persist learnings across all sessions for a project.
+Hooks run through `hooks/run.sh` (invoked via `bash`, which Git Bash always provides on Windows), which picks the first Python ≥ 3.10 among `python3`, `python` and `py -3`. On Windows this needs Git Bash installed, and every command string that references `run.sh` must use forward slashes — Git Bash's MSYS runtime mangles a raw backslash path. Set `SHIPWRIGHT_PYTHON` to override the interpreter.
 
 ## License
 

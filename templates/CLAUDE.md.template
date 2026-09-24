@@ -52,18 +52,20 @@ python -m ruff check --fix .
 | Config | `<path>` |
 | Tests | `<path>` |
 
-## Development Pipeline (Slash Commands)
+## Development Pipeline (shipwright)
 
 ```
-/design <requirement or TICKET-ID>   → generate SDD
-/breakdown <sdd-path>                → decompose into tasks
-(sdd-implementer skill)              → implement from SDD
-/review                              → code review
-/ship <env>                          → test → build → deploy
-/retro                               → capture learnings
-/dashboard                           → visual pipeline state (read-only)
-/resume                              → continue interrupted session
+/shipwright:design <requirement | TICKET-ID>   → SDD + adversarial hardening
+/shipwright:breakdown <sdd-path>               → tasks (+ Jira); reply "approved" to unlock code
+(implement)                                    → sdd-implementer runs the bug loop
+/shipwright:retro                              → capture learnings
+/shipwright:ship <env>                         → docs → tests → types → review → build → Jira
+/shipwright:dashboard                          → visual pipeline state (read-only)
+/shipwright:resume | :checkpoint | :remember   → continue, save/clear, write a memory
+/shipwright:doctor                             → installation health check
 ```
+
+Commit messages reference the task (`T<id>`) or Jira key.
 
 ## Lessons Learned
 

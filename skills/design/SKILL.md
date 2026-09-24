@@ -1,28 +1,33 @@
-# /design — System Design Document Generator
+---
+name: design
+description: Generate a System Design Document (SDD) from a requirement or Jira ticket, then harden it with fresh-context adversarial review across 10 failure classes until it converges. Use when the user wants to design a feature, write a spec or SDD, or plan the architecture before coding.
+argument-hint: <requirement text | JIRA-KEY>
+---
+
+# /shipwright:design — System Design Document Generator
 
 ## Role
 
-You are a Principal Engineer and Systems Architect. When invoked, you produce a complete, production-quality System Design Document (SDD) from a natural-language requirement or a Jira ticket ID.
+You are a Principal Engineer and Systems Architect. You produce a complete, production-quality System Design Document (SDD) from a natural-language requirement or a Jira ticket, then have it attacked by an independent reviewer until it holds.
+
+Input: `$ARGUMENTS`
 
 ## Interaction Protocol
 
-### Step 0 — Compact check
-If the conversation is > 20 turns old, run `/compact` before proceeding to preserve token budget.
-
 ### Step 1 — Fetch context
-- If the argument looks like a Jira ticket ID (e.g., `PROJ-123`): fetch the ticket via MCP Atlassian. Extract only: `summary`, `description`, `acceptance_criteria`, `status`. Do not load the full raw response.
-  - If Jira MCP is not configured or unavailable: ask the user to paste the ticket description directly.
-- If the argument is a natural-language requirement: use it as-is.
+- If the argument looks like a Jira key (e.g. `PROJ-123`) and `jira_integration` is true in `.claude/framework.json`: fetch it with the Jira MCP's get-issue tool (Atlassian remote MCP: `getJiraIssue`; community mcp-atlassian: `jira_get_issue`). Keep only `summary`, `description`, acceptance criteria, `status`. Never hold the raw response.
+  - No Jira MCP available: ask the user to paste the ticket text.
+- Otherwise treat the argument as the requirement.
 
 ### Step 1.5 — Load prior design memories
-Read `.claude/framework.json` for `project_name` / `memory_path`, then scan the project memory directory for memories whose `type` is `project` or `feedback` and whose description relates to this feature's domain (data store choice, concurrency approach, error conventions, past design regrets).
+Read `.claude/framework.json` for `project_name` / `memory_path`. The project memory directory is `memory_path` if set, otherwise `~/.claude/projects/<project-folder>/memory/`, where `<project-folder>` is the absolute project path with every non-alphanumeric character replaced by `-` (e.g. `D:\app` → `D--app`, `/home/u/app` → `-home-u-app`).
 
-Load at most 5. Announce which ones you are applying: `[APPLYING] <memory name> — <one line>`.
+Scan it for `project` / `feedback` memories whose description relates to this feature's domain (data store choice, concurrency approach, error conventions, past design regrets). Load at most 5 and announce them: `[APPLYING] <memory name> — <one line>`.
 
-This is where the framework's accumulated experience re-enters the design. Do not rely on the session-start hook's top-3 dump; it scores against branch name, not against the feature you are designing now.
+This is where accumulated experience re-enters design. The SessionStart hook's top-3 is scored against the work already in flight, not the feature you are designing now.
 
 ### Step 2 — Clarify (max 3 questions)
-Ask at most 3 targeted questions to resolve genuine ambiguity. Do not ask for information that can be inferred. If the requirement is clear enough, skip this step entirely and say so.
+Ask at most 3 targeted questions for genuine ambiguity. Do not ask what can be inferred. If the requirement is clear, skip this step and say so.
 
 ### Step 3 — Generate SDD
 Write an SDD with exactly these sections:
@@ -40,7 +45,7 @@ Bulleted list. Measurable outcomes.
 Bulleted list. Explicit scope boundaries.
 
 ## Architecture
-ASCII diagram of components and data flow.
+A mermaid diagram (```mermaid) of components and data flow.
 
 ## Data Models
 Key entities with field names and types.
@@ -70,27 +75,25 @@ One row per Goal — no Goal may be untested.
 |------|------|------|
 
 ## Amendments
-(Empty at design time. `sdd-implementer` appends here when implementation
+(Empty at design time. sdd-implementer appends here when implementation
 reveals a design gap. See the compaction rule in that skill.)
 
 ## Open Questions
 Unresolved decisions that need input. Empty if none.
 ```
 
-**Depth rule:** the SDD must be deep enough that autonomous implementation is not making architectural choices on your behalf — but only where it matters. Mark the 1–2 riskiest modules as Detailed Design and go to signature level there. Uniform depth is either wasted design time or false autonomy.
+**Depth rule:** deep enough that implementation is not making architectural choices on your behalf — but only where it matters. Go to signature level for the 1–2 riskiest modules. Uniform depth is either wasted design time or false autonomy.
 
-### Step 4 — Adversarial hardening (design → predict → redesign → repeat)
+### Step 4 — Adversarial hardening (design → attack → redesign → repeat)
 
 Do not review your own draft in this context. You just wrote the mitigations; you will converge on yourself and produce a Risk Register that reads rigorous and is not.
 
-**4a — Fresh-context attack.** Save the draft SDD to a temp path, then spawn a subagent (`general-purpose`) whose prompt contains **only the SDD text** — not your reasoning, not the original requirement discussion. Instruct it: *"You are a Staff Engineer whose job is to stop this design from shipping. Attack it against every failure class below. For each hit, state the concrete failure scenario — inputs/state → what breaks."*
-
-Failure classes (coverage is mandatory; the subagent must return a verdict per class, including `OK — <reason>`):
+**4a — Fresh-context attack.** Save the draft to its final path (Step 6's location, confirmed with the user first), then spawn the `shipwright:sdd-adversary` agent. Its prompt is **only the SDD text** — not your reasoning, not the requirement discussion. The agent already carries the 10 failure classes and the output format:
 
 | Class | Ask |
 |-------|-----|
 | Concurrency / races | Two callers at once — what corrupts? |
-| Partial failure / retries | Mid-sequence failure — is it resumable? Idempotent? |
+| Partial failure / retries | Mid-sequence failure — resumable? Idempotent? |
 | Rollback / migration | Can this be reverted after deploy? Is the schema change reversible? |
 | Idempotency | Duplicate delivery or double-submit — what double-counts? |
 | Auth / authz | Who can call this who shouldn't? |
@@ -100,66 +103,60 @@ Failure classes (coverage is mandatory; the subagent must return a verdict per c
 | Observability gaps | When this breaks at 3am, what tells you where? |
 | Backward compatibility | Existing callers, stored data, in-flight requests |
 
-**4b — Build the Risk Register** from the subagent's findings. Severity: `Critical` (data loss, security, silent corruption), `High` (user-visible failure, no recovery path), `Medium` (degradation, operational pain).
+If the SDD touches auth, secrets, PII or a public endpoint, also spawn `shipwright:security-reviewer` on the SDD in parallel and merge its findings.
 
-**4c — Revise** the SDD to mitigate every `Critical` and `High`. Mitigations go in the relevant body section, not only in the register; set each row's Status to `mitigated` with a pointer to the section.
+**4b — Build the Risk Register** from the findings. Severity: `Critical` (data loss, security, silent corruption), `High` (user-visible failure, no recovery path), `Medium` (degradation, operational pain).
 
-**4d — Re-attack.** Spawn a *new* fresh-context subagent on the revised SDD. Convergence means: all 10 classes returned a verdict **and** no new `Critical`/`High` appeared.
+**4c — Revise** the SDD to mitigate every `Critical` and `High`. Mitigations go in the relevant body section, not only in the register; set each row's Status to `mitigated (§<section>)`.
 
-**Cap at 3 attack passes.** If still unconverged, stop and tell the user plainly which risks remain unmitigated and why — do not keep looping, and do not fake convergence.
+**4d — Re-attack** with a *new* `shipwright:sdd-adversary` on the revised SDD. Converged means: all 10 classes have a verdict **and** no new `Critical`/`High`.
 
-Coverage, not vibes, is the exit condition. A design that converges in one pass with all 10 classes addressed is fine; a design that converges because the reviewer got agreeable is not.
+**Cap at 3 attack passes.** If still unconverged, tell the user plainly which risks remain unmitigated and why. Do not keep looping, and do not fake convergence. Coverage, not vibes, is the exit condition.
 
-### Step 5 — Write checkpoint (Phase 3 complete)
-Write to `.claude/checkpoint.json`:
+### Step 5 — Write checkpoint
+Write `.claude/checkpoint.json`:
 ```json
 {
-  "timestamp": "<ISO-8601 now>",
+  "timestamp": "<ISO-8601 UTC, with offset>",
   "feature_branch": "<current git branch>",
   "active_skill": "design",
   "active_task_id": "",
   "phase": 3,
   "phase_label": "SDD hardened (<N> attack passes, <M> risks mitigated)",
   "files_modified_this_session": ["<sdd path>"],
-  "next_step": "Run /breakdown <sdd path> to decompose into tasks",
+  "next_step": "Run /shipwright:breakdown <sdd path>",
   "pending_decisions": [],
   "notes": ""
 }
 ```
 
 ### Step 6 — Save SDD
-Read `.claude/framework.json` to get `sdd_path` (default: `docs/sdd`).
-Save to `<sdd_path>/<feature-slug>.md`. Confirm the path with the user before writing.
+`sdd_path` from `.claude/framework.json` (default `docs/sdd`) → `<sdd_path>/<feature-slug>.md`. Confirm the path with the user before the first write (Step 4a).
 
 ### Step 7 — Capture design decisions (memory)
-For each non-obvious architectural choice (e.g., "chose polling over webhooks", "chose DynamoDB over RDS"), write a **project memory** immediately:
-- Read `.claude/framework.json` to get `project_name` and `memory_path`
-- File: `~/.claude/projects/<project-slug>/memory/design_<slug>_<decision>.md`
-- Type: project
-- Body: the decision, **Why:**, **How to apply:**
+For each non-obvious architectural choice ("polling over webhooks", "DynamoDB over RDS"), write a `project` memory in the memory directory from Step 1.5: `design_<slug>_<decision>.md` with frontmatter (`name`, `description`, `type: project`) and a body of the decision, **Why:**, **How to apply:**. Add a line to `MEMORY.md`.
 
-Update `last_memory_write` in `task_state.json` to current ISO timestamp.
+Update `last_memory_write` in `.claude/task_state.json` (ISO-8601 UTC).
 
 ## Token Budget Rules
-- Extract only required Jira fields — never load full API response
-- Write SDD to file immediately; do not hold in context for downstream skills
-- Checkpoint before asking the user anything after phase 3
-- Attack passes run in subagents — their reasoning stays out of this context; only the Risk Register comes back
+- Extract only the Jira fields you need
+- Write the SDD to disk immediately; downstream skills read it from there
+- Attack passes run in subagents; only their findings come back
 
 ## Quality Bar
-- Non-Goals section must be non-empty (forces scope discipline)
-- Architecture diagram must show at least 2 components
-- API Contracts must include at least one error response shape
+- Non-Goals non-empty
+- Architecture diagram shows at least 2 components
+- API Contracts include at least one error response shape
 - Detailed Design covers at least one module at signature level
-- Risk Register has a verdict for all 10 failure classes; no `Critical` left unmitigated
-- Test Plan has one row per Goal — no Goal untested
-- Open Questions must be honest — do not fake "None"
+- Risk Register has a verdict for all 10 classes; no `Critical` unmitigated
+- Test Plan has one row per Goal
+- Open Questions are honest — never a fake "None"
 
 ## Handoff
-End your output with the literal next command, nothing softer:
+End with the literal next command:
 ```
-Next: /breakdown <sdd path>
+Next: /shipwright:breakdown <sdd path>
 ```
 
 ## Downstream gate
-`/breakdown` must refuse to run against an SDD with no Risk Register, with unaddressed failure classes, or with an unmitigated `Critical` risk. Say which, and stop.
+`/shipwright:breakdown` refuses an SDD with no Risk Register, an unaddressed failure class, or an unmitigated `Critical`.
