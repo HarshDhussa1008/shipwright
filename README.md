@@ -1,6 +1,6 @@
 # shipwright
 
-A structured engineering pipeline for [Claude Code](https://code.claude.com), packaged as a plugin. Design → adversarial review → break down → implement → ship, with Jira sync, an enforced approval gate, a quality gate on every edit, rate-limit protection, and a live dashboard.
+A structured engineering pipeline for [Claude Code](https://code.claude.com), packaged as a plugin. Design → adversarial review → break down → implement → ship, with Jira sync, an enforced approval gate, a quality gate on every edit, rate-limit protection, a live dashboard with pipeline metrics, and a guided review for anyone walking in cold.
 
 ```
 /shipwright:design  →  /shipwright:breakdown  →  "approved"  →  implement  →  /shipwright:retro  →  /shipwright:ship
@@ -78,6 +78,7 @@ Every hook is a no-op in projects without `.claude/framework.json`, so installin
 - **Mitigations are traceable.** Tasks record which risks they mitigate; the `test-auditor` blocks a prod ship when a Critical risk has no test that would fail without its mitigation.
 - **Evolution is passive.** Corrections and recurring lint codes become memories that re-enter at design time. Nothing rewrites its own skill files.
 - **One owner for Jira status.** Only `/shipwright:ship` transitions tickets, using the status names in `jira_transitions`.
+- **The enforcement claims are checked, not just asserted.** `evals/` runs the plugin against real Claude sessions — the breakdown gate refusing an unhardened SDD, self-approval being denied, quality-gate findings reaching Claude — and scores them, so a change that quietly breaks one of these is caught before it ships.
 
 ## Configuration
 
@@ -103,9 +104,10 @@ Every hook is a no-op in projects without `.claude/framework.json`, so installin
 claude --plugin-dir .          # run Claude Code with this checkout as the plugin
 python -m pytest -q            # hook contract, packaging and bootstrap tests
 claude plugin validate .
+claude plugin eval . --scaffold --allow-tools Edit,Write --ablation none   # evals/*, 3 cases
 ```
 
-CI runs the tests on Linux, macOS and Windows with Python 3.10 and 3.13, plus `claude plugin validate`.
+CI runs the tests on Linux, macOS and Windows with Python 3.10 and 3.13, plus `claude plugin validate`. A separate, advisory `eval` job runs the eval suite against real Claude sessions on push, skipped entirely unless an `ANTHROPIC_API_KEY` secret is set.
 
 Hooks run through `hooks/run.sh` (invoked via `bash`, which Git Bash always provides on Windows), which picks the first Python ≥ 3.10 among `python3`, `python` and `py -3`. On Windows this needs Git Bash installed, and every command string that references `run.sh` must use forward slashes — Git Bash's MSYS runtime mangles a raw backslash path. Set `SHIPWRIGHT_PYTHON` to override the interpreter.
 

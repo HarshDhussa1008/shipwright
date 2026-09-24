@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Pipeline metrics: `.claude/metrics.jsonl` (append-only, capped), `tools/metrics.py` CLI, and `quality_gate`/`approval`/`adversary_pass`/`ship` events recorded automatically.
+- Dashboard: pipeline stepper, a "ready for review / blocked on X" verdict banner, adversary-pass history, and a pipeline-metrics tile grid.
+- `/shipwright:review [sdd | slug]` — guided, section-by-section walkthrough of a hardened SDD for a reviewer, ending in an explicit verdict; never touches `task_state.approved`.
+- `evals/` — a `claude plugin eval` suite (breakdown gate, self-approval denial, quality-gate plumbing), wired into CI as an advisory job.
+
 ## 2.0.0 — plugin release
 
 ### Fixed (hooks were silently not working in 1.x)
