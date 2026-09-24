@@ -70,6 +70,11 @@ Branch: <branch> | <timestamp> | Tasks: <keys>
 
 **c) Local cleanup:** write `{}` to `.claude/checkpoint.json`. On prod, mark every task `completed` in `task_state.json`.
 
+**d) Record the ship:**
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" "${CLAUDE_PLUGIN_ROOT}/tools/metrics.py" record --project "${CLAUDE_PROJECT_DIR:-$PWD}" --event ship --data '{"env": "<env>", "result": "pass"}'
+```
+
 ### Step 6 — Failure memory + Jira comment
 Every failed gate writes a `project` memory (see /shipwright:remember for the format) and, if Jira is on, comments on the parent:
 ```
@@ -77,7 +82,10 @@ Every failed gate writes a `project` memory (see /shipwright:remember for the fo
 Error: <one-line summary>
 Branch: <branch>
 ```
-Update `last_memory_write` in `task_state.json`.
+Update `last_memory_write` in `task_state.json`. Also record the failure:
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" "${CLAUDE_PLUGIN_ROOT}/tools/metrics.py" record --project "${CLAUDE_PROJECT_DIR:-$PWD}" --event ship --data '{"env": "<env>", "result": "fail", "gate_failed": "<gate name>"}'
+```
 
 ## Rules
 - /shipwright:ship is the only skill that transitions Jira status.

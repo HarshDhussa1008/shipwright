@@ -16,7 +16,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _common import Project, now_iso, project_root, read_json, read_payload, run_safely, write_json  # noqa: E402
+from _common import (  # noqa: E402
+    Project,
+    age_seconds,
+    now_iso,
+    project_root,
+    read_json,
+    read_payload,
+    record_metric,
+    run_safely,
+    write_json,
+)
 
 APPROVAL_RE = re.compile(r"^\s*(approved?|lgtm)\b", re.IGNORECASE)
 
@@ -31,6 +41,9 @@ def capture_approval(project: Project, prompt: str) -> str | None:
     state["approved_at"] = now_iso()
     state["approved_by"] = "user-prompt"
     write_json(project.task_state, state)
+    latency = age_seconds(state.get("tasks_created_at"))
+    record_metric(project, "approval", task_count=len(state["tasks"]),
+                  latency_seconds=round(latency) if latency is not None else None)
     return (
         f"[APPROVAL] The user approved the plan ({len(state['tasks'])} tasks). "
         "task_state.approved is now true -- implementation may begin."

@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from metrics import summarize  # tools/metrics.py, same directory -- Python puts a script's own dir on sys.path[0]
+
 
 def resolve_project_root(argv: list[str]) -> Path:
     """The dashboard ships inside the plugin, so the project is not relative to this file:
@@ -61,6 +63,23 @@ def read_json(path: Path) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
         return {}
+
+
+def read_metrics_rows() -> list[dict]:
+    path = STATE_DIR / "metrics.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    rows = []
+    for line in lines:
+        try:
+            parsed = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(parsed, dict):
+            rows.append(parsed)
+    return rows
 
 
 def read_history() -> list[dict]:
@@ -305,6 +324,107 @@ def render_patterns(registry: dict) -> str:
     return "<table>" + "".join(rows) + "</table>"
 
 
+PIPELINE_STAGES = ["Design", "Adversary review", "Breakdown", "Approval", "Implement", "Retro", "Ship"]
+
+
+def determine_stage(checkpoint: dict, state: dict) -> int:
+    """Best-effort position in the pipeline from the same state the rest of the dashboard
+    already reads -- checkpoint.active_skill/phase and task_state. Approximate by design
+    (there is no single authoritative "current stage" field), good enough for an at-a-glance
+    stepper, not a source of truth."""
+    skill = str(checkpoint.get("active_skill") or "")
+    tasks = state.get("tasks") or []
+    if skill == "ship":
+        return 6
+    if skill == "retro" or (tasks and all(str(t.get("status", "")).lower() == "completed" for t in tasks) and not state.get("retro_offered")):
+        return 5
+    if state.get("approved") is True:
+        return 4
+    if tasks:
+        return 3
+    if skill == "breakdown":
+        return 2
+    if skill == "design":
+        return 1
+    return 0
+
+
+def render_pipeline(checkpoint: dict, state: dict) -> str:
+    current = determine_stage(checkpoint, state)
+    steps = []
+    for i, name in enumerate(PIPELINE_STAGES):
+        cls = "done" if i < current else "current" if i == current else "todo"
+        steps.append(f'<div class="stage {cls}"><span class="stage-dot"></span>{esc(name)}</div>')
+    return f'<div class="stages">{"".join(steps)}</div>'
+
+
+def render_review_verdict(risks: list[dict[str, str]], pending: dict, state: dict, adversary_summary: dict) -> str:
+    """The single at-a-glance answer a staff engineer opening this dashboard actually
+    wants: is this ready for my eyes, and if not, what's blocking it."""
+    blockers = []
+    unmitigated = [r for r in risks if r["severity"].lower() in ("critical", "high") and "mitigated" not in r["status"].lower()]
+    if unmitigated:
+        blockers.append(f"{len(unmitigated)} unmitigated Critical/High risk(s)")
+    staged = len(pending.get("candidates") or []) + len(pending.get("style_candidates") or [])
+    if staged:
+        blockers.append(f"{staged} staged amendment(s) not folded in")
+    needs_recheck = sum(1 for t in (state.get("tasks") or []) if t.get("needs_recheck"))
+    if needs_recheck:
+        blockers.append(f"{needs_recheck} task(s) flagged needs-recheck")
+    if adversary_summary.get("features") and not adversary_summary.get("converged"):
+        blockers.append("SDD did not converge in its last adversary pass")
+
+    if not blockers:
+        if not risks:
+            return '<p class="flag warn">No risk register yet -- nothing to review</p>'
+        return '<p class="flag ok">Ready for review -- no open blockers</p>'
+    return (
+        '<p class="flag warn">Blocked on:</p><ul>'
+        + "".join(f"<li>{esc(b)}</li>" for b in blockers) + "</ul>"
+    )
+
+
+def render_adversary_history(rows: list[dict]) -> str:
+    passes = [r for r in rows if r.get("event") == "adversary_pass"]
+    if not passes:
+        return "<p class=dim>No adversary passes recorded yet. /shipwright:design Step 4e records one per feature.</p>"
+    trs = []
+    for r in passes[-10:]:
+        conv = r.get("converged")
+        badge = '<span class="flag ok">converged</span>' if conv else '<span class="flag warn">not converged</span>'
+        trs.append(
+            f'<tr><td class=dim>{esc(str(r.get("t", ""))[:16].replace("T", " "))}</td>'
+            f'<td>{esc(r.get("sdd_path", ""))}</td><td class=mono>{esc(r.get("passes", ""))}</td>'
+            f'<td class="sev critical">{esc(r.get("risks_critical", 0))}</td>'
+            f'<td class="sev high">{esc(r.get("risks_high", 0))}</td>'
+            f'<td>{esc(r.get("risks_medium", 0))}</td><td>{badge}</td></tr>'
+        )
+    return (
+        "<table><tr><th>when</th><th>sdd</th><th>passes</th><th>crit</th><th>high</th><th>med</th><th></th></tr>"
+        + "".join(trs) + "</table>"
+    )
+
+
+def render_metrics(summary: dict) -> str:
+    qg, ap, ad, sh = summary["quality_gate"], summary["approval"], summary["adversary"], summary["ship"]
+    if summary["total_events"] == 0:
+        return "<p class=dim>No metrics yet -- these accumulate as hooks fire and skills complete phases.</p>"
+    tiles = [
+        ("quality gate hit rate", f'{qg["hit_rate_pct"]}%' if qg["hit_rate_pct"] is not None else "-", f'{qg["runs"]} run(s)'),
+        ("adversary convergence", f'{ad["convergence_rate_pct"]}%' if ad["convergence_rate_pct"] is not None else "-",
+         f'{ad["features"]} feature(s), avg {ad["avg_passes"]} pass(es)'),
+        ("approval latency (avg)", f'{ap["avg_latency_seconds"]}s' if ap["avg_latency_seconds"] is not None else "-",
+         f'{ap["count"]} approval(s)'),
+        ("ship pass rate", f'{sh["pass_rate_pct"]}%' if sh["pass_rate_pct"] is not None else "-", f'{sh["attempts"]} attempt(s)'),
+    ]
+    cards = "".join(
+        f'<div class="metric"><div class="metric-val">{esc(val)}</div>'
+        f'<div class="metric-label">{esc(label)}</div><div class="dim">{esc(sub)}</div></div>'
+        for label, val, sub in tiles
+    )
+    return f'<div class="metrics-grid">{cards}</div>'
+
+
 def render_inbox() -> str:
     if not INBOX_DIR.is_dir():
         return (
@@ -332,12 +452,14 @@ def render_header(project: str) -> str:
     if checkpoint.get("active_skill"):
         phase = f'/{checkpoint["active_skill"]} - phase {checkpoint.get("phase", "?")}: {checkpoint.get("phase_label", "")}'
 
+    state = read_json(STATE_DIR / "task_state.json")
     return (
         f"<h1>{esc(project)}</h1>"
         f'<div class="sub">{esc(branch) or "no branch"}'
         f'{" &middot; " + esc(phase) if phase else ""}'
         f'{" &middot; SDD: " + esc(sdd_path.relative_to(REPO_ROOT).as_posix()) if sdd_path else " &middot; no SDD found"}'
         f' &middot; generated {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}Z</div>'
+        f"{render_pipeline(checkpoint, state)}"
     )
 
 
@@ -366,16 +488,25 @@ def render_main() -> str:
     dirty_block = f"<pre>{esc(chr(10).join(dirty[:14]))}</pre>" if dirty else "<p class=dim>Clean.</p>"
     commits_block = f"<pre>{esc(chr(10).join(commits))}</pre>" if commits else "<p class=dim>No commits.</p>"
 
+    metrics_rows = read_metrics_rows()
+    metrics_summary = summarize(metrics_rows)
+    risks = parse_risks(parse_section(sdd_text, "Risk Register"))
+
     return f"""
+  <section class="wide" id="sec-verdict"><h2>Review verdict</h2>{render_review_verdict(risks, pending, state, metrics_summary["adversary"])}</section>
   <section id="sec-budget"><h2>Budget</h2>{render_budget(budget, threshold, history)}</section>
   <section id="sec-next"><h2>Next action</h2>{
     f'<pre>{esc(checkpoint.get("next_step", ""))}</pre>' if checkpoint.get("next_step")
     else '<p class=dim>No checkpoint. Nothing in flight.</p>'
   }</section>
   <section id="sec-patterns"><h2>Patterns</h2>{render_patterns(registry)}</section>
+  <section class="wide" id="sec-metrics"><h2>Pipeline metrics</h2>{render_metrics(metrics_summary)}</section>
   <section class="wide" id="sec-tasks"><h2>Tasks</h2>{render_tasks(state)}</section>
   <details class="wide" id="sec-risks" open><summary><h2 class="inline">Risk register</h2></summary>
-    {render_risks(parse_risks(parse_section(sdd_text, "Risk Register")))}
+    {render_risks(risks)}
+  </details>
+  <details class="wide" id="sec-adversary" open><summary><h2 class="inline">Adversary pass history</h2></summary>
+    {render_adversary_history(metrics_rows)}
   </details>
   <details id="sec-amendments" open><summary><h2 class="inline">Amendments</h2></summary>
     {render_amendments(sdd_text, pending)}
@@ -438,6 +569,16 @@ code { font-family:ui-monospace,Consolas,monospace; font-size:12px; }
 .chip.active { border-color:var(--accent); color:var(--accent); }
 .spark { margin-top:8px; }
 .spark-legend { margin-top:2px; font-size:10.5px; display:flex; gap:10px; }
+.stages { display:flex; flex-wrap:wrap; gap:0; margin-top:12px; }
+.stage { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--dim); padding:3px 10px 3px 0; position:relative; }
+.stage:not(:last-child)::after { content:""; width:18px; height:1px; background:var(--line); margin:0 6px 0 0; }
+.stage-dot { width:7px; height:7px; border-radius:50%; background:var(--line); flex:0 0 auto; }
+.stage.done { color:var(--ok); } .stage.done .stage-dot { background:var(--ok); }
+.stage.current { color:var(--accent); font-weight:650; } .stage.current .stage-dot { background:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.metrics-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+.metric { border:1px solid var(--line); border-radius:7px; padding:9px 11px; }
+.metric-val { font-size:19px; font-weight:650; font-variant-numeric:tabular-nums; }
+.metric-label { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--dim); margin-top:2px; }
 """
 
 LIVE_SCRIPT = """

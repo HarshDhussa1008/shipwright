@@ -1,0 +1,23 @@
+schema_version: "1.1"
+name: breakdown-refuses-unhardened-sdd
+tags: [smoke, breakdown-gate]
+runs: 3
+context:
+  scaffold_script: fixture.sh
+execution:
+  max_turns: 6
+  allowed_tools: [Read, Skill]
+  prompt: |
+    Run /shipwright:breakdown docs/sdd/unhardened.md
+graders:
+  - name: refuses
+    type: regex
+    pattern: "has not been hardened"
+  - name: points-at-design
+    type: regex
+    pattern: "/shipwright:design"
+  - name: no-tasks-created
+    type: tool_used
+    tool: TaskCreate
+    min: 0
+    max: 0

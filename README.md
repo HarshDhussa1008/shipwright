@@ -50,7 +50,8 @@ This adds the marketplace (with `autoUpdate: true`) and `enabledPlugins` to the 
 | `sdd-implementer` | Task-by-task implementation. Stays in the bug loop, silently stages SDD amendments, checkpoints continuously. |
 | `/shipwright:retro` | Plan vs. actual, four questions, memories, CLAUDE.md lessons, Jira comment (never a transition). |
 | `/shipwright:ship <env>` | Docs → tests → types → review (`code-reviewer`, `test-auditor`, and `security-reviewer` when relevant) → build → Jira transitions → Slack. Never auto-invoked. |
-| `/shipwright:dashboard [serve]` | Read-only visual state: risks, tasks, amendments, budget trend, patterns, inbox. |
+| `/shipwright:dashboard [serve]` | Read-only visual state: pipeline stage, review verdict, risks, tasks, amendments, pipeline metrics, budget trend, patterns, inbox. |
+| `/shipwright:review [sdd \| slug]` | Guided walkthrough of a hardened SDD for a reviewer who didn't write it — section by section, ending in an explicit verdict. |
 | `/shipwright:resume` | Continue from the checkpoint after an interruption or a rate-limit reset. |
 | `/shipwright:checkpoint [show\|save\|clear\|clear-plan]` | Manage the checkpoint or abandon a plan. |
 | `/shipwright:remember [text]` | Write a typed memory that re-enters at session start and design time. |

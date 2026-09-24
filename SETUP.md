@@ -6,7 +6,7 @@
 |---|---|
 | Claude Code | CLI, desktop app or IDE extension, recent enough for plugins |
 | Python 3.10+ | `python3`, `python` or `py -3` on PATH (or set `SHIPWRIGHT_PYTHON`) |
-| Git Bash (Windows) | Claude Code runs hooks through it; hooks invoke `run.sh` via `bash`, which Git Bash always provides — the pitfall is forward slashes: any command string referencing `run.sh` must not use a literal backslash path, which Git Bash's MSYS runtime silently mangles |
+| Git Bash (Windows) | Claude Code runs hooks through it; hooks invoke `run.sh` via `bash`. If WSL is also installed, `bash` resolved from `PATH` alone can be WSL's launcher stub (`C:\WINDOWS\system32\bash.exe`) instead of Git Bash's — a different interpreter with its own `/mnt/c/...` filesystem view that cannot open a native Windows path in any form. `/shipwright:doctor` detects this and tells you to set `CLAUDE_CODE_GIT_BASH_PATH` (see below) |
 | Your toolchain | Whatever `lint_command` / `typecheck_command` / `test_command` name — `/shipwright:doctor` checks them |
 | Jira MCP (optional) | The Atlassian remote MCP or the community `mcp-atlassian` server |
 | Slack MCP (optional) | For deploy notifications |
@@ -53,10 +53,19 @@ Claude Code keeps project memory in `~/.claude/projects/<project-folder>/memory/
 
 ## The dashboard
 
-`/shipwright:dashboard` writes `.claude/dashboard.html`; `/shipwright:dashboard serve` serves it on `127.0.0.1:7399` with live refresh. Files dropped in `.claude/inbox/` are listed with paths ready to reference.
+`/shipwright:dashboard` writes `.claude/dashboard.html`; `/shipwright:dashboard serve` serves it on `127.0.0.1:7399` with live refresh. It shows a pipeline stepper (which stage the feature is at), a one-line review verdict (ready for review / blocked on X), the risk register, adversary pass history, and pipeline metrics (quality-gate hit rate, adversary convergence, approval latency, ship pass rate) computed from `.claude/metrics.jsonl`. Files dropped in `.claude/inbox/` are listed with paths ready to reference.
+
+For a reviewer who wants to be walked through a specific SDD rather than reading the dashboard cold, `/shipwright:review` paces the same information section by section and ends in an explicit verdict.
+
+`.claude/metrics.jsonl` is append-only and populated automatically: `quality_gate` and `approval` events are recorded directly by hooks; `adversary_pass` and `ship` events are recorded by `/shipwright:design` and `/shipwright:ship` as explicit steps. `run.sh tools/metrics.py summary --project DIR` prints the same rollup from a shell.
 
 ## Troubleshooting
 
 - Something doesn't fire → `/shipwright:doctor`.
 - See hook activity → run `claude --debug` and look for `shipwright` lines, or set `SHIPWRIGHT_DEBUG=1` to surface hook exceptions.
 - Approval gate in the way of unrelated work → `/shipwright:checkpoint clear-plan`, or `approval_gate: false`.
+- **Windows + WSL: hooks silently do nothing.** If WSL is installed, `bash` can resolve to its launcher stub ahead of Git Bash's — a separate interpreter that cannot see your project's native Windows path at all. Check with `Get-Command bash -All` in PowerShell; if the top result is under `System32` or `WindowsApps`, add to Claude Code's settings (`~/.claude/settings.json` or your project's `.claude/settings.json`):
+  ```json
+  { "env": { "CLAUDE_CODE_GIT_BASH_PATH": "C:\\Program Files\\Git\\bin\\bash.exe" } }
+  ```
+  (adjust the path if Git for Windows is installed elsewhere). `/shipwright:doctor` checks for this and tells you the exact path to use.

@@ -1,0 +1,28 @@
+# Run with: claude plugin eval . --case quality-gate-surfaces-lint-findings --scaffold \
+#   --allow-tools Edit,Write --ablation none
+schema_version: "1.1"
+name: quality-gate-surfaces-lint-findings
+tags: [smoke, quality-gate]
+runs: 3
+context:
+  scaffold_script: fixture.sh
+execution:
+  max_turns: 6
+  allowed_tools: [Read, Write, Edit]
+  prompt: |
+    Create a file src/add.py containing a single function `add(a, b)` that returns
+    a + b. Use the Write tool. After you create it, report back anything the tooling
+    tells you about the file.
+graders:
+  - name: creates-the-file
+    type: tool_used
+    tool: Write
+    min: 1
+  - name: gate-finding-reaches-claude
+    type: regex
+    target: trace
+    pattern: "FAKE001"
+  - name: claude-surfaces-the-finding
+    type: regex
+    flags: i
+    pattern: "fake001"

@@ -113,6 +113,12 @@ If the SDD touches auth, secrets, PII or a public endpoint, also spawn `shipwrig
 
 **Cap at 3 attack passes.** If still unconverged, tell the user plainly which risks remain unmitigated and why. Do not keep looping, and do not fake convergence. Coverage, not vibes, is the exit condition.
 
+**4e — Record the outcome.** Once per design session (after the loop ends, converged or capped — not once per attack pass), count the final Risk Register's rows by severity, then run:
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" "${CLAUDE_PLUGIN_ROOT}/tools/metrics.py" record --project "${CLAUDE_PROJECT_DIR:-$PWD}" --event adversary_pass --data '{"passes": <N>, "risks_critical": <count>, "risks_high": <count>, "risks_medium": <count>, "converged": <true|false>, "sdd_path": "<sdd path>"}'
+```
+This is what the dashboard and `/shipwright:doctor`-adjacent metrics use to show catch rate and convergence — record it whether or not the SDD converged.
+
 ### Step 5 — Write checkpoint
 Write `.claude/checkpoint.json`:
 ```json

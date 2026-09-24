@@ -5,6 +5,7 @@
   "approved": false,
   "approved_at": null,
   "approved_by": null,
+  "tasks_created_at": null,
   "retro_offered": false,
   "last_memory_write": null,
   "last_test_run": null,

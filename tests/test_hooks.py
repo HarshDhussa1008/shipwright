@@ -86,6 +86,22 @@ def test_user_approval_flips_flag(project: Proj, plan) -> None:
     assert "[APPROVAL]" in out
 
 
+def test_approval_records_latency_metric(project: Proj, plan) -> None:
+    project.write(".claude/task_state.json", plan(tasks_created_at="2020-01-01T00:00:00+00:00"))
+    project.hook("prompt_submit", {"prompt": "approved"})
+    rows = metrics_rows(project)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["event"] == "approval" and row["task_count"] == 2
+    assert row["latency_seconds"] > 0  # 2020 -> now is a large, positive latency
+
+
+def test_approval_metric_latency_is_null_without_tasks_created_at(project: Proj, plan) -> None:
+    project.write(".claude/task_state.json", plan())  # no tasks_created_at
+    project.hook("prompt_submit", {"prompt": "approved"})
+    assert metrics_rows(project)[0]["latency_seconds"] is None
+
+
 def test_non_approval_prompts_do_not_flip(project: Proj, plan) -> None:
     project.write(".claude/task_state.json", plan())
     for prompt in ("not approved yet", "why is this approved?", "add approval step"):
@@ -189,6 +205,32 @@ def test_quality_gate_silent_when_clean_or_out_of_scope(project: Proj) -> None:
     assert project.hook("quality_gate", {"tool_input": {"file_path": str(clean)}}).stdout == ""
     assert project.hook("quality_gate", {"tool_input": {"file_path": str(project.root / "notes.md")}}).stdout == ""
     assert project.hook("quality_gate", {"tool_input": {"file_path": str(project.root / ".venv/dirty.py")}}).stdout == ""
+
+
+def metrics_rows(project: Proj) -> list[dict]:
+    path = project.claude / "metrics.jsonl"
+    if not path.is_file():
+        return []
+    return [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+
+def test_quality_gate_records_a_metric_even_when_clean(project: Proj) -> None:
+    """A silent stdout (clean file) must still leave a metrics row -- the hit-rate
+    denominator needs every gate run, not just the ones with findings."""
+    configure_gate(project)
+    clean = project.write("src/clean.py", "x = 1\n")
+    project.hook("quality_gate", {"tool_input": {"file_path": str(clean)}})
+    dirty = project.write("src/dirty.py", "import os\n")
+    project.hook("quality_gate", {"tool_input": {"file_path": str(dirty)}})
+    rows = metrics_rows(project)
+    assert len(rows) == 2
+    assert rows[0]["event"] == "quality_gate" and rows[0]["clean"] is True and rows[0]["lint"] == 0
+    assert rows[1]["clean"] is False and rows[1]["lint"] == 2 and rows[1]["types"] == 1
+
+    # an out-of-scope file (no gate_extensions match, or skipped dir) never even runs the
+    # gate, so it must not add a metrics row either
+    project.hook("quality_gate", {"tool_input": {"file_path": str(project.root / "notes.md")}})
+    assert len(metrics_rows(project)) == 2
 
 
 def test_quality_gate_reports_missing_tool(project: Proj) -> None:

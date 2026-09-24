@@ -25,6 +25,7 @@ from _common import (  # noqa: E402
     project_root,
     read_json,
     read_payload,
+    record_metric,
     run_safely,
     save_hook_state,
     write_json,
@@ -108,12 +109,15 @@ def main() -> None:
     details: list[str] = []
     notes: list[str] = []
     summary: list[str] = []
+    lint_count = 0
+    type_count = 0
 
     if lint := config.get("lint_command"):
         rc, out = run_template(str(lint), target, project.root)
         if rc == -1:
             notes.append(out)
         lines = finding_lines(out)
+        lint_count = len(lines)
         if note := broken_tool_note(project, session, "lint", rc, out, lines):
             notes.append(note)
         codes.update(m.group(1) for ln in lines if (m := LINT_CODE.search(ln)))
@@ -127,11 +131,15 @@ def main() -> None:
         if rc == -1:
             notes.append(out)
         lines = [ln for ln in out.splitlines() if ": error:" in ln or ": warning:" in ln]
+        type_count = len(lines)
         if note := broken_tool_note(project, session, "typecheck", rc, out, lines):
             notes.append(note)
         codes.update(f"mypy:{m.group(1)}" for ln in lines if (m := MYPY_CODE.search(ln)))
         details.extend(lines)
         summary.append(f"types {len(lines)}")
+
+    if lint or typecheck:
+        record_metric(project, "quality_gate", file=target.name, lint=lint_count, types=type_count, clean=lint_count == 0 and type_count == 0)
 
     registry = read_json(project.registry)
     alerts = []

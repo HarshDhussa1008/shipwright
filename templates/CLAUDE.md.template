@@ -44,6 +44,7 @@
 /shipwright:retro                              → capture learnings
 /shipwright:ship <env>                         → docs → tests → types → review → build → Jira
 /shipwright:dashboard                          → visual pipeline state (read-only)
+/shipwright:review <sdd | slug>                → guided walkthrough for a reviewer
 /shipwright:resume | :checkpoint | :remember   → continue, save/clear, write a memory
 /shipwright:doctor                             → installation health check
 ```

@@ -74,6 +74,7 @@ Write `.claude/checkpoint.json` with `active_skill: "breakdown"`, `phase: 1`, `p
   "approved": false,
   "approved_at": null,
   "approved_by": null,
+  "tasks_created_at": "<ISO-8601 UTC, now>",
   "retro_offered": false,
   "last_memory_write": null,
   "last_test_run": null,

@@ -94,6 +94,7 @@ class Project:
         self.registry = self.state_dir / "anti_pattern_registry.json"
         self.amendments = self.state_dir / "amendments_pending.json"
         self.hook_state = self.state_dir / "shipwright_hook_state.json"
+        self.metrics = self.state_dir / "metrics.jsonl"
 
     @property
     def enabled(self) -> bool:
@@ -191,6 +192,44 @@ def hook_state(project: Project) -> dict[str, Any]:
 
 def save_hook_state(project: Project, state: dict[str, Any]) -> None:
     write_json(project.hook_state, state)
+
+
+METRICS_MAX_LINES = 5000
+
+
+def record_metric(project: Project, event: str, **fields: Any) -> None:
+    """Append one event to .claude/metrics.jsonl (append-only, capped like budget_history).
+    Never raises: metrics are an observability nice-to-have, not load-bearing."""
+    row = {"t": now_iso(), "event": event, **fields}
+    try:
+        project.state_dir.mkdir(parents=True, exist_ok=True)
+        with project.metrics.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+        lines = project.metrics.read_text(encoding="utf-8").splitlines()
+        if len(lines) > METRICS_MAX_LINES:
+            tmp = project.metrics.with_suffix(".jsonl.tmp")
+            tmp.write_text("\n".join(lines[-METRICS_MAX_LINES:]) + "\n", encoding="utf-8")
+            os.replace(tmp, project.metrics)
+    except OSError:
+        pass
+
+
+def read_metrics(project: Project) -> list[dict[str, Any]]:
+    try:
+        lines = project.metrics.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    rows: list[dict[str, Any]] = []
+    for ln in lines:
+        if not ln.strip():
+            continue
+        try:
+            parsed = json.loads(ln)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(parsed, dict):
+            rows.append(parsed)
+    return rows
 
 
 def run_safely(main: Any) -> None:
