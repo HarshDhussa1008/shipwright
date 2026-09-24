@@ -117,6 +117,120 @@ def detect_stack(root: Path) -> dict[str, Any]:
     return overrides
 
 
+LANGUAGE_LABELS = {"python": "Python", "typescript": "TypeScript", "javascript": "JavaScript", "go": "Go", "rust": "Rust"}
+FRAMEWORK_MARKERS = (
+    ("fastapi", "FastAPI"), ("django", "Django"), ("flask", "Flask"),
+    ("@nestjs/core", "NestJS"), ("next", "Next.js"), ("express", "Express"), ("react", "React"), ("vue", "Vue"),
+)
+TEST_FRAMEWORK_MARKERS = (("jest", "Jest"), ("vitest", "Vitest"), ("mocha", "Mocha"), ("@playwright/test", "Playwright"))
+
+
+def _run_version(cmd: list[str], pattern: str) -> str | None:
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(pattern, out.stdout + out.stderr)
+    return match.group(1) if match else None
+
+
+def _language_version(lang: str) -> str | None:
+    if lang == "python":
+        return _run_version([python_cmd(), "--version"], r"(\d+\.\d+\.\d+)")
+    if lang == "go":
+        return _run_version(["go", "version"], r"go(\d+\.\d+(?:\.\d+)?)")
+    if lang == "rust":
+        return _run_version(["rustc", "--version"], r"rustc (\d+\.\d+\.\d+)")
+    if lang in ("typescript", "javascript"):
+        return _run_version(["node", "--version"], r"(\d+\.\d+\.\d+)")
+    return None
+
+
+def detect_language_line(languages: list[str]) -> str:
+    parts = []
+    for lang in languages:
+        label = LANGUAGE_LABELS.get(lang, lang.title())
+        version = _language_version(lang)
+        parts.append(f"{label} {version}" if version else label)
+    return ", ".join(parts) or "<e.g. Python 3.12>"
+
+
+def _text_deps(root: Path) -> tuple[str, dict[str, str]]:
+    text = ""
+    for name in ("requirements.txt", "requirements-dev.txt", "pyproject.toml", "go.mod", "Cargo.toml"):
+        path = root / name
+        if path.is_file():
+            text += path.read_text(encoding="utf-8", errors="ignore").lower() + "\n"
+    pkg = read_json(root / "package.json") if (root / "package.json").is_file() else {}
+    deps = {**(pkg.get("dependencies") or {}), **(pkg.get("devDependencies") or {})}
+    return text, deps
+
+
+def detect_framework_line(root: Path) -> str:
+    text, deps = _text_deps(root)
+    for key, label in FRAMEWORK_MARKERS:
+        if key in text or key in deps:
+            return label
+    return "<e.g. FastAPI>"
+
+
+def detect_tests_line(root: Path, languages: list[str]) -> str:
+    _, deps = _text_deps(root)
+    for key, label in TEST_FRAMEWORK_MARKERS:
+        if key in deps:
+            return label
+    if "python" in languages:
+        return "pytest"
+    if "go" in languages:
+        return "go test"
+    if "rust" in languages:
+        return "cargo test"
+    if "typescript" in languages or "javascript" in languages:
+        return "<e.g. Jest>"
+    return "<e.g. pytest>"
+
+
+def detect_container_line(root: Path) -> str:
+    if (root / "Dockerfile").is_file() or (root / "docker-compose.yml").is_file() or (root / "docker-compose.yaml").is_file():
+        return "Docker"
+    return "<e.g. Docker, or omit this row>"
+
+
+def dev_workflow_block(root: Path, config: dict[str, Any]) -> str:
+    languages = config.get("languages") or []
+    lines: list[str] = []
+    if "python" in languages:
+        lines += [
+            "# Activate venv",
+            "source .venv/bin/activate   # macOS/Linux",
+            ".\\.venv\\Scripts\\activate    # Windows",
+            "",
+            "# Install deps",
+            "pip install -r requirements-dev.txt" if any(root.glob("requirements*.txt")) else "pip install -e .",
+            "",
+        ]
+    elif "typescript" in languages or "javascript" in languages:
+        lines += ["# Install deps", "npm install", ""]
+    elif "go" in languages:
+        lines += ["# Install deps", "go mod download", ""]
+    elif "rust" in languages:
+        lines += ["# Fetch deps", "cargo fetch", ""]
+
+    def add(label: str, key: str) -> None:
+        cmd = config.get(key)
+        if cmd and "{file}" not in str(cmd):
+            lines.extend([f"# {label}", str(cmd), ""])
+
+    add("Run tests", "test_command")
+    add("Type check", "project_typecheck_command")
+    if config.get("lint_command"):
+        lines.extend(["# Lint + fix (per-file; substitute your file)", str(config["lint_command"]).replace("{file}", "."), ""])
+    build = config.get("build_command", "")
+    lines.append("# Deploy")
+    lines.append(str(build) if build and "placeholder" not in str(build) else "<your build/deploy command>")
+    return "\n".join(lines).rstrip()
+
+
 def jira_key_from_branch(root: Path) -> str | None:
     try:
         branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True,
@@ -172,13 +286,23 @@ def merge_gitignore(root: Path, report: list[str]) -> None:
         report.append(f"[MERGE] .claude/.gitignore: +{len(missing)} pattern(s)")
 
 
-def seed_claude_md(root: Path, report: list[str]) -> None:
+def seed_claude_md(root: Path, config: dict[str, Any], report: list[str]) -> None:
     dest = root / "CLAUDE.md"
     if dest.exists():
         report.append("[SKIP]  CLAUDE.md exists")
         return
-    shutil.copyfile(TEMPLATES / "CLAUDE.md.template", dest)
-    report.append("[OK]    CLAUDE.md from template (fill in the <PLACEHOLDERS>)")
+    languages = config.get("languages") or []
+    text = (TEMPLATES / "CLAUDE.md.template").read_text(encoding="utf-8")
+    text = (text
+            .replace("{{PROJECT_NAME}}", str(config.get("project_name") or root.resolve().name))
+            .replace("{{LANGUAGE}}", detect_language_line(languages))
+            .replace("{{FRAMEWORK}}", detect_framework_line(root))
+            .replace("{{TESTS}}", detect_tests_line(root, languages))
+            .replace("{{CONTAINER}}", detect_container_line(root))
+            .replace("{{DEV_WORKFLOW}}", dev_workflow_block(root, config)))
+    dest.write_text(text, encoding="utf-8")
+    report.append("[OK]    CLAUDE.md from template (stack/commands filled in from detection; "
+                  "Overview, Key File Paths and project rules still need you)")
 
 
 def statusline_command(data_dir: Path) -> str:
@@ -338,7 +462,7 @@ def main() -> None:
         seed_config(root, report)
         seed_state(root, report)
         merge_gitignore(root, report)
-        seed_claude_md(root, report)
+        seed_claude_md(root, {**DEFAULT_CONFIG, **read_json(root / ".claude" / "framework.json")}, report)
         if not args.no_statusline:
             install_statusline(root, data_dir, args.force_statusline, report)
         if args.team:

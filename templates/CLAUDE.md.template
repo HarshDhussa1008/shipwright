@@ -1,4 +1,4 @@
-# <PROJECT_NAME> — Claude Project Guide
+# {{PROJECT_NAME}} — Claude Project Guide
 
 ## Overview
 
@@ -8,32 +8,15 @@
 
 | Layer | Technology |
 |-------|-----------|
-| Language | <e.g. Python 3.12> |
-| Framework | <e.g. FastAPI> |
-| Tests | <e.g. pytest> |
-| Container | <e.g. Docker> |
+| Language | {{LANGUAGE}} |
+| Framework | {{FRAMEWORK}} |
+| Tests | {{TESTS}} |
+| Container | {{CONTAINER}} |
 
 ## Dev Workflow
 
 ```bash
-# Activate venv
-source .venv/bin/activate   # macOS/Linux
-.\.venv\Scripts\activate    # Windows
-
-# Install deps
-pip install -r requirements-dev.txt
-
-# Run tests
-python -m pytest . -v
-
-# Type check
-python -m mypy .
-
-# Lint + fix
-python -m ruff check --fix .
-
-# Deploy
-<your build/deploy command>
+{{DEV_WORKFLOW}}
 ```
 
 ## Coding Standards
